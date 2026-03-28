@@ -188,9 +188,9 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
     // Linux: make host.docker.internal work
     "--add-host",
     "host.docker.internal:host-gateway",
-    // Mount agent dir with models.json
+    // Mount agent dir with models.json (container runs as root)
     "-v",
-    `${agentDir}:/home/node/.pi/agent`,
+    `${agentDir}:/root/.pi/agent`,
     // Environment
     "-e",
     `GATEWAY_HOST=host.docker.internal`,

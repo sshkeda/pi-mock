@@ -3,7 +3,14 @@ set -e
 
 # Setup network isolation: only allow traffic to the gateway
 if [ -n "$GATEWAY_HOST" ]; then
-  GATEWAY_IP=$(getent hosts "$GATEWAY_HOST" | awk '{print $1}')
+  # Get IPv4 address specifically (getent may return IPv6 on Docker Desktop)
+  GATEWAY_IP=$(getent ahostsv4 "$GATEWAY_HOST" 2>/dev/null | head -1 | awk '{print $1}')
+  
+  # Fallback: try hosts file directly
+  if [ -z "$GATEWAY_IP" ]; then
+    GATEWAY_IP=$(getent hosts "$GATEWAY_HOST" 2>/dev/null | awk '{print $1}' | grep -v ':' | head -1)
+  fi
+
   if [ -n "$GATEWAY_IP" ]; then
     echo "[entrypoint] Setting up iptables. Gateway: $GATEWAY_HOST ($GATEWAY_IP)"
 
@@ -19,7 +26,7 @@ if [ -n "$GATEWAY_HOST" ]; then
 
     echo "[entrypoint] iptables configured. Only gateway is reachable."
   else
-    echo "[entrypoint] WARNING: Could not resolve $GATEWAY_HOST"
+    echo "[entrypoint] WARNING: Could not resolve IPv4 for $GATEWAY_HOST"
   fi
 fi
 
