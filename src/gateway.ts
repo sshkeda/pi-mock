@@ -311,11 +311,41 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
 
     const host = targetUrl.hostname;
     const { action, rule } = resolve(host);
-    log(host, req.method ?? "GET", action, req.url);
+    const httpLlmProvider = isLlmHost(host);
+    log(host, req.method ?? "GET", httpLlmProvider ? "intercept" : action, req.url);
 
-    if (action === "block") {
+    if (action === "block" && !httpLlmProvider) {
       res.writeHead(403, { "Content-Type": "text/plain" });
       res.end(`[pi-mock] blocked: ${host}`);
+      return;
+    }
+
+    // LLM API over HTTP — parse and route through brain
+    if (httpLlmProvider && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(typeof c === "string" ? Buffer.from(c) : c);
+      try {
+        const rawBody = JSON.parse(Buffer.concat(chunks).toString());
+        const provider = detectProvider(req.method, targetUrl.pathname) || httpLlmProvider;
+        const apiReq = parseRequest(provider, rawBody);
+        apiReq._provider = provider;
+        apiReq._raw = rawBody;
+        requests.push(apiReq);
+        const idx = requestIndex++;
+        let brainResp: BrainResponse;
+        try {
+          brainResp = await brain(apiReq, idx);
+        } catch (err: unknown) {
+          brainResp = textBlock(`brain error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        const { contentType, body } = serializeResponse(provider, brainResp, apiReq.model);
+        res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache", Connection: "keep-alive" });
+        res.write(body);
+        res.end();
+      } catch {
+        res.writeHead(400);
+        res.end("bad json");
+      }
       return;
     }
 
@@ -357,16 +387,21 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
     const [host, portStr] = (req.url ?? "").split(":");
     const port = parseInt(portStr) || 443;
     const { action, rule } = resolve(host);
-    log(host, "CONNECT", action, req.url);
 
-    if (action === "block") {
+    // Check if this is a known LLM API host — always intercept these
+    // regardless of the default network action
+    const llmProvider = isLlmHost(host);
+
+    log(host, "CONNECT", llmProvider ? "intercept" : action, req.url);
+
+    // Block — but NOT if it's a known LLM host (those get intercepted)
+    if (action === "block" && !llmProvider) {
       socket.write("HTTP/1.1 403 Blocked by pi-mock\r\n\r\n");
       socket.end();
       return;
     }
 
     // MITM intercept — for explicit intercept rules OR known LLM API hosts
-    const llmProvider = isLlmHost(host);
     if (action === "intercept" || llmProvider) {
       if (!ca || !config.certDir) {
         socket.write("HTTP/1.1 502 HTTPS intercept unavailable (no CA)\r\n\r\n");
@@ -381,10 +416,8 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
         return;
       }
 
-      // Update the log entry to show what actually happened
-      const lastLog = proxyLog[proxyLog.length - 1];
-      lastLog.action = "intercept";
-      lastLog.provider = llmProvider ?? undefined;
+      // Tag the log entry with provider info
+      proxyLog[proxyLog.length - 1].provider = llmProvider ?? undefined;
 
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
 
