@@ -1,8 +1,8 @@
 FROM node:22-slim
 
-# Install iptables (v4 + v6) for network isolation
+# Install iptables (v4 + v6) for network isolation + ca-certificates for HTTPS intercept
 RUN apt-get update && \
-    apt-get install -y iptables ip6tables iproute2 && \
+    apt-get install -y iptables ip6tables iproute2 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Install pi globally

@@ -53,23 +53,24 @@ export interface SpawnResult {
  */
 function createAgentDir(gatewayUrl: string): string {
   const dir = mkdtempSync(join(tmpdir(), "pi-mock-agent-"));
+
+  // Only define the pi-mock provider for the primary pi process.
+  // All other providers keep their real hostnames and API keys.
+  // The gateway intercepts them at the HTTPS proxy level via MITM —
+  // the sandbox talks to real hostnames, TLS validates via our CA cert,
+  // and the gateway serves brain responses in the correct provider format.
   const modelsJson = {
     providers: {
       "pi-mock": {
         baseUrl: `${gatewayUrl}/v1`,
         api: "anthropic-messages",
         apiKey: "mock-key",
-        models: [
-          {
-            id: "mock",
-            name: "pi-mock",
-          },
-        ],
+        models: [{ id: "mock", name: "pi-mock" }],
       },
     },
   };
+
   writeFileSync(join(dir, "models.json"), JSON.stringify(modelsJson, null, 2));
-  // Create empty settings so pi doesn't complain
   writeFileSync(join(dir, "settings.json"), "{}");
   return dir;
 }

@@ -77,6 +77,10 @@ export interface ApiRequest {
   system?: string | Array<{ type: string; text: string }>;
   max_tokens: number;
   stream?: boolean;
+  /** Which provider format this request came from. Set by gateway. */
+  _provider?: string;
+  /** Raw unparsed request body. Set by gateway. */
+  _raw?: unknown;
 }
 
 // ─── SSE serialization ──────────────────────────────────────────────

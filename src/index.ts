@@ -31,3 +31,9 @@ export {
 } from "./gateway.js";
 export { createRpcClient, type RpcClient, type RpcEvent, type RpcResponse, type UIHandler } from "./rpc.js";
 export { spawnLocal, spawnSandbox, hasDocker } from "./sandbox.js";
+export {
+  detectProvider,
+  parseRequest,
+  serializeResponse,
+  type ProviderName,
+} from "./providers.js";
