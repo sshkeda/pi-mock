@@ -54,11 +54,9 @@ export interface SpawnResult {
 function createAgentDir(gatewayUrl: string): string {
   const dir = mkdtempSync(join(tmpdir(), "pi-mock-agent-"));
 
-  // Only define the pi-mock provider for the primary pi process.
-  // All other providers keep their real hostnames and API keys.
-  // The gateway intercepts them at the HTTPS proxy level via MITM —
-  // the sandbox talks to real hostnames, TLS validates via our CA cert,
-  // and the gateway serves brain responses in the correct provider format.
+  // Override ALL provider base URLs to point to our gateway.
+  // The gateway detects the provider format from the URL path and responds correctly.
+  // This means every pi process in the sandbox (including subprocesses) hits our brain.
   const modelsJson = {
     providers: {
       "pi-mock": {
@@ -67,6 +65,14 @@ function createAgentDir(gatewayUrl: string): string {
         apiKey: "mock-key",
         models: [{ id: "mock", name: "pi-mock" }],
       },
+      anthropic: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      openai: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      google: { baseUrl: `${gatewayUrl}/v1beta`, apiKey: "mock-key" },
+      groq: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      xai: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      openrouter: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      mistral: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
+      cerebras: { baseUrl: `${gatewayUrl}/v1`, apiKey: "mock-key" },
     },
   };
 
@@ -102,7 +108,6 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     ...(process.env as Record<string, string>),
     PI_CODING_AGENT_DIR: agentDir,
     PI_OFFLINE: "1",
-    NODE_TLS_REJECT_UNAUTHORIZED: "0",
     // Proxy env vars — best-effort capture in local mode (no iptables)
     HTTP_PROXY: `http://127.0.0.1:${config.gatewayPort}`,
     HTTPS_PROXY: `http://127.0.0.1:${config.gatewayPort}`,
@@ -208,8 +213,7 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
     "no_proxy=host.docker.internal",
     "-e",
     "PI_OFFLINE=1",
-    "-e",
-    "NODE_TLS_REJECT_UNAUTHORIZED=0",
+
     // Mount working directory
     "-v",
     `${cwd}:/work`,

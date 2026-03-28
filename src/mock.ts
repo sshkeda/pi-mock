@@ -288,19 +288,13 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     res.end(JSON.stringify({ error: "not found" }));
   }
 
-  // ── 1. Create cert dir for HTTPS MITM + Start gateway ──
-
-  const { mkdtempSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
-  const certDir = mkdtempSync(join(tmpdir(), "pi-mock-certs-"));
+  // ── 1. Start gateway ──
 
   const gw = await createGateway({
     brain: options.brain,
     rules: options.network?.rules,
     default: options.network?.default ?? "block",
     port: options.port,
-    certDir,
     onManagement,
   });
 
@@ -465,13 +459,11 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       // Close gateway (force-closes all sockets)
       await gw.close();
 
-      // Clean up temp dirs
-      for (const dir of [tmpDir, certDir]) {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch {
-          /* best effort */
-        }
+      // Clean up temp agent dir
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
       }
     },
   };

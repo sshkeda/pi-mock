@@ -15,7 +15,7 @@ import { toSSE as anthropicToSSE } from "./anthropic.js";
 
 // ─── Provider detection ──────────────────────────────────────────────
 
-export type ProviderName = "anthropic" | "openai" | "google" | "unknown";
+export type ProviderName = "anthropic" | "openai" | "openai-responses" | "google" | "unknown";
 
 /**
  * Detect which provider format a request is using, based on URL path.
@@ -24,8 +24,11 @@ export function detectProvider(method: string, path: string): ProviderName {
   // Anthropic: POST /v1/messages
   if (path.endsWith("/messages")) return "anthropic";
 
-  // OpenAI: POST /v1/chat/completions
+  // OpenAI: POST /v1/chat/completions (Chat Completions API)
   if (path.includes("/chat/completions")) return "openai";
+
+  // OpenAI: POST /v1/responses (Responses API — used by pi for OpenAI models)
+  if (path.endsWith("/responses")) return "openai-responses";
 
   // Google: POST /v1beta/models/...:generateContent or :streamGenerateContent
   if (path.includes(":generateContent") || path.includes(":streamGenerateContent")) return "google";
@@ -234,6 +237,139 @@ export function googleToSSE(response: BrainResponse, _model: string): string {
   return out.join("");
 }
 
+// ─── OpenAI Responses API (pi's default for OpenAI models) ──────────
+
+export function parseOpenAIResponsesRequest(body: Record<string, unknown>): ApiRequest {
+  const input = body.input;
+  let messages: ApiRequest["messages"] = [];
+
+  if (typeof input === "string") {
+    messages = [{ role: "user", content: input }];
+  } else if (Array.isArray(input)) {
+    for (const item of input as Array<Record<string, unknown>>) {
+      if (item.type === "message") {
+        const content = item.content as Array<Record<string, unknown>> | undefined;
+        const textParts = content?.filter(c => c.type === "input_text" || c.type === "output_text")
+          .map(c => c.text as string);
+        messages.push({ role: (item.role as string) ?? "user", content: textParts?.join("") ?? "" });
+      } else if (item.type === "function_call") {
+        messages.push({ role: "assistant", content: `[tool_call: ${item.name}(${item.arguments})]` });
+      } else if (item.type === "function_call_output") {
+        messages.push({ role: "user", content: (item.output as string) ?? "" });
+      } else if (typeof item.role === "string") {
+        // Plain message with role + content
+        const content = item.content;
+        if (typeof content === "string") {
+          messages.push({ role: item.role, content });
+        } else if (Array.isArray(content)) {
+          const texts = (content as Array<Record<string, unknown>>)
+            .filter(c => c.type === "input_text" || c.type === "output_text" || c.type === "text")
+            .map(c => (c.text as string) ?? "");
+          messages.push({ role: item.role, content: texts.join("") });
+        }
+      }
+    }
+  }
+
+  return {
+    model: (body.model as string) ?? "unknown",
+    messages,
+    system: body.instructions as string | undefined,
+    tools: (body.tools as ApiRequest["tools"]) ?? undefined,
+    max_tokens: (body.max_output_tokens as number) ?? 16384,
+    stream: (body.stream as boolean) ?? true,
+  };
+}
+
+function respSSE(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+export function openaiResponsesToSSE(response: BrainResponse, model: string): string {
+  if (!Array.isArray(response) && response.type === "error") {
+    return respSSE("error", { type: "error", code: "server_error", message: response.message });
+  }
+
+  const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
+  const responseId = `resp_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+  const out: string[] = [];
+  let seq = 0;
+
+  out.push(respSSE("response.created", {
+    type: "response.created",
+    response: { id: responseId, status: "in_progress", model, output: [], usage: null },
+    sequence_number: seq++,
+  }));
+
+  for (const b of blocks) {
+    const itemId = `item_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+
+    if (b.type === "text") {
+      out.push(respSSE("response.output_item.added", {
+        type: "response.output_item.added",
+        item: { type: "message", id: itemId, role: "assistant", content: [] },
+        sequence_number: seq++,
+      }));
+      out.push(respSSE("response.content_part.added", {
+        type: "response.content_part.added",
+        part: { type: "output_text", text: "" },
+        sequence_number: seq++,
+      }));
+      out.push(respSSE("response.output_text.delta", {
+        type: "response.output_text.delta", delta: b.text, sequence_number: seq++,
+      }));
+      out.push(respSSE("response.output_text.done", {
+        type: "response.output_text.done", text: b.text, sequence_number: seq++,
+      }));
+      out.push(respSSE("response.output_item.done", {
+        type: "response.output_item.done",
+        item: { type: "message", id: itemId, role: "assistant", content: [{ type: "output_text", text: b.text }] },
+        sequence_number: seq++,
+      }));
+    }
+
+    if (b.type === "tool_call") {
+      const callId = `call_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
+      const argsJson = JSON.stringify(b.input);
+
+      out.push(respSSE("response.output_item.added", {
+        type: "response.output_item.added",
+        item: { type: "function_call", id: itemId, call_id: callId, name: b.name, arguments: "" },
+        sequence_number: seq++,
+      }));
+      out.push(respSSE("response.function_call_arguments.delta", {
+        type: "response.function_call_arguments.delta", delta: argsJson, sequence_number: seq++,
+      }));
+      out.push(respSSE("response.function_call_arguments.done", {
+        type: "response.function_call_arguments.done", arguments: argsJson, sequence_number: seq++,
+      }));
+      out.push(respSSE("response.output_item.done", {
+        type: "response.output_item.done",
+        item: { type: "function_call", id: itemId, call_id: callId, name: b.name, arguments: argsJson },
+        sequence_number: seq++,
+      }));
+    }
+  }
+
+  out.push(respSSE("response.completed", {
+    type: "response.completed",
+    response: {
+      id: responseId,
+      status: "completed",
+      model,
+      output: blocks.map((b) => {
+        if (b.type === "text") return { type: "message", role: "assistant", content: [{ type: "output_text", text: b.text }] };
+        if (b.type === "tool_call") return { type: "function_call", name: b.name, arguments: JSON.stringify(b.input) };
+        return {};
+      }),
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    },
+    sequence_number: seq++,
+  }));
+
+  return out.join("");
+}
+
 // ─── Unified serializer ──────────────────────────────────────────────
 
 export function serializeResponse(
@@ -246,10 +382,11 @@ export function serializeResponse(
       return { contentType: "text/event-stream", body: anthropicToSSE(response, model) };
     case "openai":
       return { contentType: "text/event-stream", body: openaiToSSE(response, model) };
+    case "openai-responses":
+      return { contentType: "text/event-stream", body: openaiResponsesToSSE(response, model) };
     case "google":
       return { contentType: "text/event-stream", body: googleToSSE(response, model) };
     default:
-      // Fallback to Anthropic
       return { contentType: "text/event-stream", body: anthropicToSSE(response, model) };
   }
 }
@@ -261,6 +398,8 @@ export function parseRequest(
   switch (provider) {
     case "openai":
       return parseOpenAIRequest(body);
+    case "openai-responses":
+      return parseOpenAIResponsesRequest(body);
     case "google":
       return parseGoogleRequest(body);
     case "anthropic":
