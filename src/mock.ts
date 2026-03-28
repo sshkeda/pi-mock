@@ -87,10 +87,12 @@ export interface Mock {
   setBrain(brain: Brain): void;
   /** Update network rules mid-test. */
   setNetworkRules(rules: NetworkRule[], defaultAction?: NetworkAction): void;
-  /** All Anthropic API requests the brain saw. */
+  /** All API requests the brain saw (all providers). */
   readonly requests: ApiRequest[];
   /** Every proxy request (host, action, timestamp). */
   readonly proxyLog: ProxyLogEntry[];
+  /** Wait for the next brain request. Resolves with the request + index. */
+  waitForRequest(pred?: (req: ApiRequest, index: number) => boolean, timeoutMs?: number): Promise<{ request: ApiRequest; index: number }>;
   /** All RPC events from pi. */
   readonly events: RpcEvent[];
   /** Pi's stderr output lines. */
@@ -99,6 +101,8 @@ export interface Mock {
   readonly port: number;
   /** Gateway URL (http://127.0.0.1:PORT). */
   readonly url: string;
+  /** Management API auth token. Required as x-pi-mock-token header or ?token= param. */
+  readonly token: string;
   /** Shut everything down. */
   close(): Promise<void>;
 }
@@ -143,6 +147,10 @@ export async function createMock(options: MockOptions): Promise<Mock> {
   let activeRules: NetworkRule[] = [...(options.network?.rules ?? [])];
   let activeDefault: NetworkAction = options.network?.default ?? "block";
 
+  // Management API auth token — prevents sandbox from calling /_/ endpoints
+  const { randomUUID } = await import("node:crypto");
+  const mgmtToken = randomUUID();
+
   // Will be set after RPC client is created
   let rpc: RpcClient;
 
@@ -153,6 +161,14 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     const path = url.pathname;
 
     res.setHeader("Content-Type", "application/json");
+
+    // Auth check — reject requests without the token
+    const authHeader = req.headers["x-pi-mock-token"] ?? url.searchParams.get("token");
+    if (authHeader !== mgmtToken) {
+      res.writeHead(403);
+      res.end(JSON.stringify({ error: "forbidden" }));
+      return;
+    }
 
     try {
       // POST /_/prompt — send prompt, wait for agent_end, return cycle events
@@ -384,6 +400,9 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     get url() {
       return gw.url;
     },
+    get token() {
+      return mgmtToken;
+    },
 
     setBrain(b) {
       gw.setBrain(b);
@@ -403,8 +422,9 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     async drain(timeoutMs = defaultRunTimeout) {
       const start = eventCursor;
       await rpc.waitFor(
-        (e) => e.type === "agent_end" && rpc.events.indexOf(e) >= start,
+        (e) => e.type === "agent_end",
         timeoutMs,
+        start,
       );
       return rpc.events.slice(start);
     },
@@ -413,15 +433,34 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       const start = rpc.events.length;
       eventCursor = start;
       await this.prompt(message);
+      // scanFrom=start so we catch agent_end even if it fired before this line
       await rpc.waitFor(
-        (e) => e.type === "agent_end" && rpc.events.indexOf(e) >= start,
+        (e) => e.type === "agent_end",
         timeoutMs,
+        start,
       );
       return rpc.events.slice(start);
     },
 
     waitFor(pred, timeoutMs) {
       return rpc.waitFor(pred, timeoutMs);
+    },
+
+    waitForRequest(pred, timeoutMs = 30_000) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          unsub();
+          reject(new Error(`waitForRequest timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        const unsub = gw.onRequest((req, index) => {
+          if (!pred || pred(req, index)) {
+            clearTimeout(timer);
+            unsub();
+            resolve({ request: req, index });
+          }
+        });
+      });
     },
 
     async close() {
@@ -493,6 +532,99 @@ export function script(...responses: BrainResponse[]): Brain {
 /** Brain that repeats the same response forever. */
 export function always(response: BrainResponse): Brain {
   return () => response;
+}
+
+// ─── Controllable brain ──────────────────────────────────────────────
+
+export interface PendingCall {
+  /** The API request pi sent. */
+  request: ApiRequest;
+  /** Which call this is (0-indexed). */
+  index: number;
+  /** Release the brain with this response. */
+  respond(response: BrainResponse): void;
+}
+
+export interface ControllableBrain {
+  /** The brain function — pass this to createMock({ brain: cb.brain }). */
+  brain: Brain;
+  /** Wait for the next brain call. Blocks until pi makes an API request. */
+  waitForCall(timeoutMs?: number): Promise<PendingCall>;
+}
+
+/**
+ * Create a brain where each call blocks until you explicitly respond.
+ * Gives tests full control over timing and interleaving.
+ *
+ * ```typescript
+ * const cb = createControllableBrain();
+ * const mock = await createMock({ brain: cb.brain, ... });
+ * await mock.prompt("do something");
+ * const call = await cb.waitForCall();
+ * console.log(call.request.messages); // inspect what pi sent
+ * call.respond(text("hello"));        // release the brain
+ * ```
+ */
+export function createControllableBrain(): ControllableBrain {
+  // Queue of calls waiting for a response
+  const pending: Array<{
+    request: ApiRequest;
+    index: number;
+    resolve: (response: BrainResponse) => void;
+  }> = [];
+
+  // Queue of waiters waiting for a call
+  const waiters: Array<{
+    resolve: (call: PendingCall) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
+
+  const brain: Brain = (request, index) => {
+    return new Promise<BrainResponse>((resolve) => {
+      const entry = { request, index, resolve };
+
+      // If someone is waiting for a call, deliver immediately
+      if (waiters.length > 0) {
+        const waiter = waiters.shift()!;
+        clearTimeout(waiter.timer);
+        waiter.resolve({
+          request,
+          index,
+          respond: (response: BrainResponse) => resolve(response),
+        });
+      } else {
+        // No one waiting yet — queue the call
+        pending.push(entry);
+      }
+    });
+  };
+
+  return {
+    brain,
+    waitForCall(timeoutMs = 30_000) {
+      return new Promise<PendingCall>((resolve, reject) => {
+        // If there's already a pending call, deliver immediately
+        if (pending.length > 0) {
+          const entry = pending.shift()!;
+          return resolve({
+            request: entry.request,
+            index: entry.index,
+            respond: (response: BrainResponse) => entry.resolve(response),
+          });
+        }
+
+        // Otherwise wait for the next call
+        const timer = setTimeout(() => {
+          const idx = waiters.findIndex((w) => w.resolve === resolve);
+          if (idx >= 0) waiters.splice(idx, 1);
+          reject(new Error(`waitForCall timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        waiters.push({ resolve, reject, timer });
+      });
+    },
+  };
 }
 
 /** Default brain — always responds with a simple text message. */

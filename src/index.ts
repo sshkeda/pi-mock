@@ -1,5 +1,11 @@
 // Public API
-export { createMock, script, always, echo, type Mock, type MockOptions } from "./mock.js";
+export {
+  createMock,
+  script, always, echo,
+  createControllableBrain,
+  type Mock, type MockOptions,
+  type ControllableBrain, type PendingCall,
+} from "./mock.js";
 export {
   text,
   thinking,

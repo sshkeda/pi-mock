@@ -35,11 +35,12 @@ const DEFAULT_STATE_FILE = resolve(tmpdir(), "pi-mock.json");
 interface StateFile {
   port: number;
   pid: number;
+  token: string;
   startedAt: string;
 }
 
-function writeState(port: number, file: string) {
-  const state: StateFile = { port, pid: process.pid, startedAt: new Date().toISOString() };
+function writeState(port: number, token: string, file: string) {
+  const state: StateFile = { port, pid: process.pid, token, startedAt: new Date().toISOString() };
   writeFileSync(file, JSON.stringify(state, null, 2));
 }
 
@@ -65,18 +66,23 @@ function mgmt(
   method: string,
   path: string,
   body?: unknown,
+  token?: string,
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string> = {};
+    if (payload) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = String(Buffer.byteLength(payload));
+    }
+    if (token) headers["x-pi-mock-token"] = token;
     const req = request(
       {
         hostname: "127.0.0.1",
         port,
         method,
         path,
-        headers: payload
-          ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
-          : {},
+        headers,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -209,7 +215,7 @@ async function cmdStart(argv: string[]) {
 
   console.error("[pi-mock] Starting...");
   const mock = await createMock(options);
-  writeState(mock.port, stateFile);
+  writeState(mock.port, mock.token, stateFile);
 
   console.error(`[pi-mock] Ready`);
   console.error(`[pi-mock] Gateway:  http://127.0.0.1:${mock.port}`);
@@ -302,7 +308,7 @@ async function cmdPrompt(argv: string[]) {
 
   const state = readState(stateFile);
   const timeout = args["timeout"] ? parseInt(args["timeout"] as string) : undefined;
-  const { status, data } = await mgmt(state.port, "POST", "/_/prompt", { message, timeout });
+  const { status, data } = await mgmt(state.port, "POST", "/_/prompt", { message, timeout }, state.token);
 
   if (status !== 200) {
     console.error(`Error: ${JSON.stringify(data)}`);
@@ -317,7 +323,7 @@ async function cmdEvents(argv: string[]) {
   const stateFile = (args["state"] as string) ?? DEFAULT_STATE_FILE;
   const since = args["since"] ? parseInt(args["since"] as string) : 0;
   const state = readState(stateFile);
-  const { data } = await mgmt(state.port, "GET", `/_/events?since=${since}`);
+  const { data } = await mgmt(state.port, "GET", `/_/events?since=${since}`, undefined, state.token);
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -325,7 +331,7 @@ async function cmdRequests(argv: string[]) {
   const { args } = parseArgs(argv);
   const stateFile = (args["state"] as string) ?? DEFAULT_STATE_FILE;
   const state = readState(stateFile);
-  const { data } = await mgmt(state.port, "GET", "/_/requests");
+  const { data } = await mgmt(state.port, "GET", "/_/requests", undefined, state.token);
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -333,7 +339,7 @@ async function cmdProxyLog(argv: string[]) {
   const { args } = parseArgs(argv);
   const stateFile = (args["state"] as string) ?? DEFAULT_STATE_FILE;
   const state = readState(stateFile);
-  const { data } = await mgmt(state.port, "GET", "/_/proxy-log");
+  const { data } = await mgmt(state.port, "GET", "/_/proxy-log", undefined, state.token);
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -341,7 +347,7 @@ async function cmdStatus(argv: string[]) {
   const { args } = parseArgs(argv);
   const stateFile = (args["state"] as string) ?? DEFAULT_STATE_FILE;
   const state = readState(stateFile);
-  const { data } = await mgmt(state.port, "GET", "/_/status");
+  const { data } = await mgmt(state.port, "GET", "/_/status", undefined, state.token);
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -351,7 +357,7 @@ async function cmdStop(argv: string[]) {
   const state = readState(stateFile);
 
   try {
-    await mgmt(state.port, "POST", "/_/stop");
+    await mgmt(state.port, "POST", "/_/stop", undefined, state.token);
     console.error("[pi-mock] Stopped.");
   } catch {
     console.error("[pi-mock] Session not responding. Cleaning up state file.");

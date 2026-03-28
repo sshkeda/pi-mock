@@ -85,6 +85,8 @@ export interface Gateway {
   readonly proxyLog: ProxyLogEntry[];
   setBrain(brain: Brain): void;
   setRules(rules: NetworkRule[], defaultAction?: NetworkAction): void;
+  /** Subscribe to brain requests. Returns unsubscribe. */
+  onRequest(listener: (req: ApiRequest, index: number) => void): () => void;
   close(): Promise<void>;
 }
 
@@ -99,6 +101,7 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
   const requests: ApiRequest[] = [];
   const proxyLog: ProxyLogEntry[] = [];
   const sockets = new Set<Socket>();
+  const requestListeners = new Set<(req: ApiRequest, index: number) => void>();
 
   // ── Rule engine ──
 
@@ -159,6 +162,7 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
 
     requests.push(apiReq);
     const idx = requestIndex++;
+    for (const l of requestListeners) l(apiReq, idx);
 
     let response: BrainResponse;
     try {
@@ -312,6 +316,10 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
     proxyLog,
     setBrain(b) { brain = b; },
     setRules(r, d) { rules = r; if (d) defaultAction = d; },
+    onRequest(listener) {
+      requestListeners.add(listener);
+      return () => requestListeners.delete(listener);
+    },
     close() {
       for (const socket of sockets) socket.destroy();
       sockets.clear();

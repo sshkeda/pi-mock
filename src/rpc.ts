@@ -41,8 +41,8 @@ export interface RpcClient {
   readonly events: RpcEvent[];
   /** Send a raw RPC command and wait for its response. */
   send(cmd: Record<string, unknown>, timeoutMs?: number): Promise<RpcResponse>;
-  /** Wait for an event matching a predicate (only future events). */
-  waitFor(pred: (e: RpcEvent) => boolean, timeoutMs?: number): Promise<RpcEvent>;
+  /** Wait for an event matching a predicate. Scans existing events from scanFrom first. */
+  waitFor(pred: (e: RpcEvent) => boolean, timeoutMs?: number, scanFrom?: number): Promise<RpcEvent>;
   /** Subscribe to every event. Returns unsubscribe function. */
   on(listener: (e: RpcEvent) => void): () => void;
   /** Set handler for extension UI requests. */
@@ -159,8 +159,14 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
       });
     },
 
-    waitFor(pred, timeoutMs = 60_000) {
+    waitFor(pred, timeoutMs = 60_000, scanFrom = 0) {
       return new Promise<RpcEvent>((resolve, reject) => {
+        // Scan existing events first — fixes race where event arrives
+        // between prompt() resolving and waitFor() subscribing
+        for (let i = scanFrom; i < events.length; i++) {
+          if (pred(events[i])) return resolve(events[i]);
+        }
+
         const timer = setTimeout(() => {
           listeners.delete(check);
           reject(new Error(`waitFor timeout after ${timeoutMs}ms`));
