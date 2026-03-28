@@ -1,0 +1,32 @@
+{
+  "name": "pi-mock",
+  "version": "2.0.0",
+  "description": "Integration testing harness for pi extensions. Mock Anthropic API, network isolation via Docker, RPC control, CLI interface.",
+  "keywords": ["pi", "pi-package", "testing", "mock", "integration-test", "extension"],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "pi-mock": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "Dockerfile",
+    "docker-entrypoint.sh"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
