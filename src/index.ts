@@ -2,6 +2,7 @@
 export { createMock, script, always, echo, type Mock, type MockOptions } from "./mock.js";
 export {
   text,
+  thinking,
   toolCall,
   bash,
   edit,
@@ -13,6 +14,7 @@ export {
   type BrainResponse,
   type ResponseBlock,
   type TextBlock,
+  type ThinkingBlock,
   type ToolCallBlock,
   type ErrorBlock,
   type ApiRequest,
@@ -23,6 +25,8 @@ export {
   type GatewayConfig,
   type NetworkRule,
   type NetworkAction,
+  type InterceptResponse,
+  type InterceptHandler,
   type ProxyLogEntry,
 } from "./gateway.js";
 export { createRpcClient, type RpcClient, type RpcEvent, type RpcResponse, type UIHandler } from "./rpc.js";

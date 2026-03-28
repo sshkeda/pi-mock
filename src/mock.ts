@@ -15,10 +15,10 @@ import { type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import {
   createGateway,
-  type Gateway,
   type NetworkRule,
   type NetworkAction,
   type ProxyLogEntry,
+  type InterceptResponse,
 } from "./gateway.js";
 import {
   createRpcClient,
@@ -139,6 +139,10 @@ export async function createMock(options: MockOptions): Promise<Mock> {
   let closed = false;
   let eventCursor = 0; // tracks start of current cycle for drain()
 
+  // Live network rules — separate from options so /_/intercept can mutate them
+  let activeRules: NetworkRule[] = [...(options.network?.rules ?? [])];
+  let activeDefault: NetworkAction = options.network?.default ?? "block";
+
   // Will be set after RPC client is created
   let rpc: RpcClient;
 
@@ -203,19 +207,64 @@ export async function createMock(options: MockOptions): Promise<Mock> {
         return;
       }
 
-      // POST /_/network — update network rules
+      // POST /_/network — replace all network rules
       if (req.method === "POST" && path === "/_/network") {
         const body = await readBody(req);
-        const { rules: newRules, default: defaultAction } = JSON.parse(body);
-        gw.setRules(
-          (newRules ?? []).map((r: { match: string; action?: string }) => ({
+        const parsed = JSON.parse(body);
+        activeRules = (parsed.rules ?? []).map(
+          (r: { match: string; action?: string; response?: InterceptResponse }) => ({
             match: r.match,
             action: r.action,
-          })),
-          defaultAction,
+            response: r.response,
+          }),
         );
+        if (parsed.default) activeDefault = parsed.default;
+        gw.setRules(activeRules, activeDefault);
         res.writeHead(200);
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ ok: true, rules: activeRules.length }));
+        return;
+      }
+
+      // POST /_/intercept — add/update/remove an intercept for a host
+      // Body: { host, body, status?, headers? } to set, { host, remove: true } to remove
+      if (req.method === "POST" && path === "/_/intercept") {
+        const body = await readBody(req);
+        const { host, remove, ...response } = JSON.parse(body);
+        if (!host) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: "missing host" }));
+          return;
+        }
+
+        const idx = activeRules.findIndex(
+          (r) => typeof r.match === "string" && r.match === host,
+        );
+
+        if (remove) {
+          if (idx >= 0) activeRules.splice(idx, 1);
+        } else {
+          const rule: NetworkRule = {
+            match: host,
+            action: "intercept" as const,
+            response: { status: response.status ?? 200, headers: response.headers, body: response.body ?? "" },
+          };
+          if (idx >= 0) activeRules[idx] = rule;
+          else activeRules.unshift(rule);
+        }
+
+        gw.setRules(activeRules, activeDefault);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, rules: activeRules.length }));
+        return;
+      }
+
+      // GET /_/intercepts — list current intercept rules
+      if (req.method === "GET" && path === "/_/intercepts") {
+        const intercepts = activeRules
+          .filter((r) => r.action === "intercept")
+          .map((r) => ({ host: r.match, response: r.response }));
+        res.writeHead(200);
+        res.end(JSON.stringify({ intercepts }));
         return;
       }
 

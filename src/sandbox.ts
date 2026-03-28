@@ -101,6 +101,7 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     ...(process.env as Record<string, string>),
     PI_CODING_AGENT_DIR: agentDir,
     PI_OFFLINE: "1",
+    NODE_TLS_REJECT_UNAUTHORIZED: "0",
     // Proxy env vars — best-effort capture in local mode (no iptables)
     HTTP_PROXY: `http://127.0.0.1:${config.gatewayPort}`,
     HTTPS_PROXY: `http://127.0.0.1:${config.gatewayPort}`,
@@ -206,6 +207,8 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
     "no_proxy=host.docker.internal",
     "-e",
     "PI_OFFLINE=1",
+    "-e",
+    "NODE_TLS_REJECT_UNAUTHORIZED=0",
     // Mount working directory
     "-v",
     `${cwd}:/work`,

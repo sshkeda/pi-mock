@@ -14,6 +14,11 @@ export interface TextBlock {
   text: string;
 }
 
+export interface ThinkingBlock {
+  type: "thinking";
+  thinking: string;
+}
+
 export interface ToolCallBlock {
   type: "tool_call";
   name: string;
@@ -25,7 +30,7 @@ export interface ErrorBlock {
   message: string;
 }
 
-export type ResponseBlock = TextBlock | ToolCallBlock;
+export type ResponseBlock = TextBlock | ThinkingBlock | ToolCallBlock;
 export type BrainResponse = ResponseBlock | ResponseBlock[] | ErrorBlock;
 
 export type Brain = (
@@ -51,6 +56,8 @@ export const writeTool = (path: string, content: string): ToolCallBlock =>
 
 export const readTool = (path: string): ToolCallBlock =>
   toolCall("read", { path });
+
+export const thinking = (content: string): ThinkingBlock => ({ type: "thinking", thinking: content });
 
 export const error = (message: string): ErrorBlock => ({ type: "error", message });
 
@@ -105,12 +112,23 @@ export function toSSE(response: BrainResponse, model: string): string {
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
 
+    if (b.type === "thinking") {
+      out.push(sse("content_block_start", {
+        type: "content_block_start", index: i,
+        content_block: { type: "thinking", thinking: "" },
+      }));
+      out.push(sse("content_block_delta", {
+        type: "content_block_delta", index: i,
+        delta: { type: "thinking_delta", thinking: b.thinking },
+      }));
+      out.push(sse("content_block_stop", { type: "content_block_stop", index: i }));
+    }
+
     if (b.type === "text") {
       out.push(sse("content_block_start", {
         type: "content_block_start", index: i,
         content_block: { type: "text", text: "" },
       }));
-      // One delta with the full text (simple)
       out.push(sse("content_block_delta", {
         type: "content_block_delta", index: i,
         delta: { type: "text_delta", text: b.text },
