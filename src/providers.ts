@@ -404,6 +404,6 @@ export function parseRequest(
       return parseGoogleRequest(body);
     case "anthropic":
     default:
-      return body as unknown as ApiRequest;
+      return { ...body } as unknown as ApiRequest;
   }
 }
