@@ -79,6 +79,7 @@ export function openaiToSSE(response: BrainResponse, model: string): string {
     })}\n\n`,
   );
 
+  let toolCallIndex = 0;
   for (const b of blocks) {
     if (b.type === "text") {
       out.push(
@@ -106,7 +107,7 @@ export function openaiToSSE(response: BrainResponse, model: string): string {
               delta: {
                 tool_calls: [
                   {
-                    index: 0,
+                    index: toolCallIndex++,
                     id: toolCallId,
                     type: "function",
                     function: { name: b.name, arguments: JSON.stringify(b.input) },

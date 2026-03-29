@@ -3,7 +3,19 @@
   "version": "2.0.0",
   "description": "Integration testing harness for pi extensions. Mock Anthropic API, network isolation via Docker, RPC control, CLI interface.",
   "keywords": ["pi", "pi-package", "testing", "mock", "integration-test", "extension"],
+  "author": "sshkeda",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sshkeda/pi-mock.git"
+  },
+  "homepage": "https://github.com/sshkeda/pi-mock#readme",
+  "bugs": {
+    "url": "https://github.com/sshkeda/pi-mock/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
