@@ -1,6 +1,6 @@
 {
   "name": "pi-mock",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Integration testing harness for pi extensions. Mock Anthropic API, network isolation via Docker, RPC control, CLI interface.",
   "keywords": [
     "pi",
@@ -44,7 +44,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node test/test-e2e.mjs && node test/test-issues.mjs && node test/test-steer.mjs",
+    "test": "npm run build && node test/test-providers.mjs && node test/test-network.mjs && node test/test-replay.mjs && node test/test-cli.mjs && node test/test-e2e.mjs && node test/test-issues.mjs && node test/test-steer.mjs",
     "test:e2e": "node test/test-e2e.mjs",
     "test:issues": "node test/test-issues.mjs",
     "prepublishOnly": "npm run build"
