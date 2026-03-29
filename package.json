@@ -23,6 +23,9 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "npm run build && node test/test-e2e.mjs && node test/test-issues.mjs && node test/test-steer.mjs",
+    "test:e2e": "node test/test-e2e.mjs",
+    "test:issues": "node test/test-issues.mjs",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {

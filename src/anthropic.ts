@@ -30,8 +30,25 @@ export interface ErrorBlock {
   message: string;
 }
 
+/** HTTP-level error — gateway returns actual HTTP status codes (429, 500, etc.) */
+export interface HttpErrorBlock {
+  type: "http_error";
+  status: number;
+  message?: string;
+  headers?: Record<string, string>;
+  /**
+   * If true, include `x-should-retry: false` header to bypass the Anthropic SDK's
+   * built-in retries (2 by default). This sends errors straight to pi's own retry
+   * logic, which is usually what you want for testing.
+   *
+   * Set to false to test the full SDK retry chain (each error triggers 3 HTTP requests).
+   * Default: true
+   */
+  bypassSdkRetry?: boolean;
+}
+
 export type ResponseBlock = TextBlock | ThinkingBlock | ToolCallBlock;
-export type BrainResponse = ResponseBlock | ResponseBlock[] | ErrorBlock;
+export type BrainResponse = ResponseBlock | ResponseBlock[] | ErrorBlock | HttpErrorBlock;
 
 export type Brain = (
   request: ApiRequest,
@@ -61,6 +78,52 @@ export const thinking = (content: string): ThinkingBlock => ({ type: "thinking",
 
 export const error = (message: string): ErrorBlock => ({ type: "error", message });
 
+// ─── HTTP error builders (trigger real API error handling in pi) ─────
+
+/** Generic HTTP error. Returns actual HTTP status code to trigger SDK/pi error handling. */
+export const httpError = (
+  status: number,
+  message?: string,
+  headers?: Record<string, string>,
+): HttpErrorBlock => ({
+  type: "http_error",
+  status,
+  message,
+  headers,
+});
+
+/**
+ * 429 Too Many Requests — triggers pi's rate limit retry logic.
+ * Includes retry-after header so pi/SDK know how long to wait.
+ */
+export const rateLimited = (retryAfterSeconds = 1): HttpErrorBlock => ({
+  type: "http_error",
+  status: 429,
+  message: "rate limit exceeded",
+  headers: { "retry-after": String(retryAfterSeconds) },
+});
+
+/** 529 Overloaded — Anthropic-specific overload error. Triggers pi's retry logic. */
+export const overloaded = (message = "overloaded_error"): HttpErrorBlock => ({
+  type: "http_error",
+  status: 529,
+  message,
+});
+
+/** 500 Internal Server Error. */
+export const serverError = (message = "internal server error"): HttpErrorBlock => ({
+  type: "http_error",
+  status: 500,
+  message,
+});
+
+/** 503 Service Unavailable. */
+export const serviceUnavailable = (message = "service temporarily unavailable"): HttpErrorBlock => ({
+  type: "http_error",
+  status: 503,
+  message,
+});
+
 // ─── Incoming request shape ─────────────────────────────────────────
 
 export interface ApiRequest {
@@ -79,6 +142,8 @@ export interface ApiRequest {
   stream?: boolean;
   /** Which provider format this request came from. Set by gateway. */
   _provider?: string;
+  /** HTTP request headers from the client. Set by gateway. */
+  _headers?: Record<string, string>;
   /** Raw unparsed request body. Set by gateway. */
   _raw?: unknown;
 }

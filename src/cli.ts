@@ -27,6 +27,7 @@ import { pathToFileURL } from "node:url";
 import { createMock, script, always, echo, type MockOptions } from "./mock.js";
 import { type Brain, type BrainResponse } from "./anthropic.js";
 import { type NetworkRule } from "./gateway.js";
+import { createRecorder, replay } from "./record.js";
 
 // ─── State file ──────────────────────────────────────────────────────
 
@@ -116,6 +117,19 @@ async function loadBrain(brainArg: string): Promise<Brain> {
     throw new Error(`Brain file not found: ${absPath}`);
   }
 
+  // Auto-detect JSON transcript files → replay brain
+  if (absPath.endsWith(".json")) {
+    console.error(`[pi-mock] Loading transcript: ${absPath}`);
+    return replay(absPath, {
+      onDivergence: (index, expected, actual) => {
+        console.error(
+          `[pi-mock] ⚠ replay divergence at turn ${index}: ` +
+          `expected ${expected.messageCount} messages, got ${actual.messageCount}`,
+        );
+      },
+    });
+  }
+
   const mod = await import(pathToFileURL(absPath).href);
   const exported = mod.default;
 
@@ -158,6 +172,8 @@ function parseArgs(argv: string[]) {
         }
         i++;
       }
+    } else if (arg === "-o") {
+      args["output"] = argv[++i];
     } else if (arg === "-e") {
       const next = argv[++i];
       const existing = args["extension"];
@@ -247,6 +263,74 @@ async function cmdStart(argv: string[]) {
       resolve();
     });
   });
+}
+
+async function cmdRecord(argv: string[]) {
+  const { args, positional } = parseArgs(argv);
+  const message = positional.join(" ");
+  if (!message) {
+    console.error("Usage: pi-mock record [options] <prompt message>");
+    console.error("  --model <id>     Real model ID (e.g. claude-sonnet-4-20250514). Required.");
+    console.error("  -o, --output <f> Output transcript path. Default: session.json");
+    process.exit(1);
+  }
+
+  const model = args["model"] as string;
+  if (!model) {
+    console.error("[pi-mock] Error: --model is required for recording (e.g. --model claude-sonnet-4-20250514)");
+    process.exit(1);
+  }
+
+  const output = (args["output"] as string) ?? (args["o"] as string) ?? "session.json";
+  const extensions = ((args["extension"] as string[]) ?? []).map((e) => resolve(e));
+  const timeout = args["timeout"] ? parseInt(args["timeout"] as string) : 300_000;
+
+  const rules: NetworkRule[] = [];
+  for (const host of (args["allow"] as string[]) ?? []) {
+    rules.push({ match: host, action: "allow" });
+  }
+
+  const rec = createRecorder({
+    model,
+    apiKey: args["api-key"] as string | undefined,
+    onTurn: (turn, index) => {
+      const types = turn.response.map((b) => b.type).join(", ");
+      console.error(`[pi-mock] Turn ${index}: [${types}]`);
+    },
+  });
+
+  const mock = await createMock({
+    brain: rec.brain,
+    extensions,
+    sandbox: !!args["sandbox"],
+    network: {
+      // Default to allow for recording — extensions need real network
+      default: (args["network-default"] as string as "allow" | "block") ?? "allow",
+      rules,
+    },
+    cwd: args["cwd"] as string,
+    port: args["port"] ? parseInt(args["port"] as string) : 0,
+    image: args["image"] as string,
+  });
+
+  try {
+    console.error(`[pi-mock] Recording with model: ${model}`);
+    console.error(`[pi-mock] Prompt: "${message}"`);
+    const events = await mock.run(message, timeout);
+
+    const outputPath = resolve(output);
+    await rec.save(outputPath);
+    console.error(`[pi-mock] Saved ${rec.transcript.turns.length} turns → ${outputPath}`);
+
+    // Also output events to stdout
+    console.log(JSON.stringify({
+      events,
+      transcript: outputPath,
+      turns: rec.transcript.turns.length,
+    }, null, 2));
+  } finally {
+    await mock.close();
+  }
 }
 
 async function cmdRun(argv: string[]) {
@@ -371,6 +455,7 @@ function printHelp() {
 
 Commands:
   start [options]           Start gateway + pi. Stays running.
+  record [options] <prompt> Record a real API session → transcript JSON.
   run [options] <prompt>    One-shot: start → prompt → print events → stop.
   prompt <message>          Send a prompt to a running session.
   events                    Print all RPC events as JSON.
@@ -391,12 +476,17 @@ Start/Run options:
   --image <name>            Docker image. Default: auto-build "pi-mock-sandbox"
   --startup-timeout <ms>    Max wait for pi to start. Default: 15000
 
+Record options:
+  --model <id>              Real model ID (required). e.g. claude-sonnet-4-20250514
+  -o, --output <file>       Transcript output path. Default: session.json
+  --api-key <key>           API key (default: from ANTHROPIC_API_KEY / OPENAI_API_KEY)
+
 Other options:
   --state <file>            State file path. Default: /tmp/pi-mock.json
   --timeout <ms>            Prompt/run timeout. Default: 120000
   --since <n>               For events: only show events since index N.
 
-Brain file format:
+Brain file format (JS or JSON):
   Default-export a function (req, index) => BrainResponse, or an array of BrainResponse.
 
   // brain.js
@@ -411,6 +501,14 @@ Examples:
   pi-mock stop
 
   pi-mock run --brain ./brain.js -e ./ext.ts "do something"
+
+  # Record a real session, then replay it
+  pi-mock record --model claude-sonnet-4-20250514 -e ./ext.ts -o session.json "build a todo app"
+  pi-mock run --brain session.json -e ./ext.ts "build a todo app"
+
+  # Hand-write a scenario as JSON
+  echo '[{"type":"tool_call","name":"bash","input":{"command":"ls"}}]' > scenario.json
+  pi-mock run --brain scenario.json -e ./ext.ts "list files"
 `);
 }
 
@@ -428,6 +526,9 @@ async function main() {
     switch (command) {
       case "start":
         await cmdStart(rest);
+        break;
+      case "record":
+        await cmdRecord(rest);
         break;
       case "run":
         await cmdRun(rest);

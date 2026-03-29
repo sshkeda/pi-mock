@@ -24,6 +24,7 @@ import {
   createRpcClient,
   type RpcClient,
   type RpcEvent,
+  type RpcResponse,
   type UIHandler,
 } from "./rpc.js";
 import {
@@ -83,6 +84,25 @@ export interface Mock {
   drain(timeoutMs?: number): Promise<RpcEvent[]>;
   /** Wait for an event matching a predicate. */
   waitFor(pred: (e: RpcEvent) => boolean, timeoutMs?: number): Promise<RpcEvent>;
+  /**
+   * Steer the agent mid-turn — message is delivered after the current tool call completes.
+   * Use this to test extensions like pi-manager that inject guidance during active turns.
+   */
+  steer(message: string): Promise<void>;
+  /**
+   * Queue a follow-up message — delivered after the agent finishes current work.
+   * Triggers a new agent turn with this message. Use to test multi-turn extension flows.
+   */
+  followUp(message: string): Promise<void>;
+  /**
+   * Abort the current agent turn. The agent stops what it's doing and emits agent_end.
+   */
+  abort(): Promise<void>;
+  /**
+   * Send a raw RPC command to pi. Escape hatch for any RPC command pi supports
+   * (get_session_stats, set_auto_retry, set_model, etc.)
+   */
+  sendRpc(command: Record<string, unknown>, timeoutMs?: number): Promise<RpcResponse>;
   /** Replace the brain mid-test. */
   setBrain(brain: Brain): void;
   /** Update network rules mid-test. */
@@ -419,13 +439,50 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       }
     },
 
+    async steer(message) {
+      const resp = await rpc.send({ type: "steer", message });
+      if (!resp.success) {
+        throw new Error(`Steer rejected: ${resp.error ?? "unknown"}`);
+      }
+    },
+
+    async followUp(message) {
+      const resp = await rpc.send({ type: "follow_up", message });
+      if (!resp.success) {
+        throw new Error(`Follow-up rejected: ${resp.error ?? "unknown"}`);
+      }
+    },
+
+    async abort() {
+      const resp = await rpc.send({ type: "abort" });
+      if (!resp.success) {
+        throw new Error(`Abort rejected: ${resp.error ?? "unknown"}`);
+      }
+    },
+
+    sendRpc(command, timeoutMs) {
+      return rpc.send(command, timeoutMs);
+    },
+
     async drain(timeoutMs = defaultRunTimeout) {
       const start = eventCursor;
-      await rpc.waitFor(
-        (e) => e.type === "agent_end",
-        timeoutMs,
-        start,
-      );
+      let scanFrom = start;
+      while (true) {
+        const agentEnd = await rpc.waitFor(
+          (e) => e.type === "agent_end",
+          timeoutMs,
+          scanFrom,
+        );
+        const messages = (agentEnd as Record<string, unknown>).messages as Array<Record<string, unknown>> | undefined;
+        const lastAssistant = messages ? [...messages].reverse().find((m: Record<string, unknown>) => m.role === "assistant") : undefined;
+        if (!lastAssistant || lastAssistant.stopReason !== "error") break;
+        const retryStarted = await rpc
+          .waitFor((e) => e.type === "auto_retry_start", 500, scanFrom)
+          .then(() => true)
+          .catch(() => false);
+        if (!retryStarted) break;
+        scanFrom = rpc.events.length;
+      }
       return rpc.events.slice(start);
     },
 
@@ -433,12 +490,38 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       const start = rpc.events.length;
       eventCursor = start;
       await this.prompt(message);
-      // scanFrom=start so we catch agent_end even if it fired before this line
-      await rpc.waitFor(
-        (e) => e.type === "agent_end",
-        timeoutMs,
-        start,
-      );
+
+      // Wait for agent_end, handling pi's auto-retry loop.
+      // Pi emits agent_end → (async) auto_retry_start → delay → agent_start → ... → agent_end.
+      // We need to keep waiting through retry cycles until we get a final agent_end.
+      let scanFrom = start;
+      while (true) {
+        const agentEnd = await rpc.waitFor(
+          (e) => e.type === "agent_end",
+          timeoutMs,
+          scanFrom,
+        );
+
+        // Check if pi might retry: only if the last assistant message was an error.
+        // Successful runs (stopReason: "stop" or "toolUse") return instantly — no grace wait.
+        const messages = (agentEnd as Record<string, unknown>).messages as Array<Record<string, unknown>> | undefined;
+        const lastAssistant = messages ? [...messages].reverse().find((m: Record<string, unknown>) => m.role === "assistant") : undefined;
+        if (!lastAssistant || lastAssistant.stopReason !== "error") break;
+
+        // Error path: pi's retry logic runs asynchronously after agent_end.
+        // Scan from BEFORE the agent_end event to catch auto_retry_start that
+        // arrived in the same stdout chunk (fixes same-tick race condition).
+        const retryStarted = await rpc
+          .waitFor((e) => e.type === "auto_retry_start", 500, scanFrom)
+          .then(() => true)
+          .catch(() => false);
+
+        if (!retryStarted) break; // Error but no retry (disabled or max reached)
+
+        // Retry started — update scanFrom to find the NEXT agent_end
+        scanFrom = rpc.events.length;
+      }
+
       return rpc.events.slice(start);
     },
 
@@ -448,6 +531,14 @@ export async function createMock(options: MockOptions): Promise<Mock> {
 
     waitForRequest(pred, timeoutMs = 30_000) {
       return new Promise((resolve, reject) => {
+        // Scan existing requests first — same pattern as rpc.waitFor().
+        // Without this, requests that arrived before waitForRequest() is called are missed.
+        for (let i = 0; i < gw.requests.length; i++) {
+          if (!pred || pred(gw.requests[i], i)) {
+            return resolve({ request: gw.requests[i], index: i });
+          }
+        }
+
         const timer = setTimeout(() => {
           unsub();
           reject(new Error(`waitForRequest timeout after ${timeoutMs}ms`));
@@ -545,16 +636,41 @@ export interface PendingCall {
   respond(response: BrainResponse): void;
 }
 
+/** Filter predicate for waitForCall. */
+export type CallFilter = (request: ApiRequest, index: number) => boolean;
+
 export interface ControllableBrain {
   /** The brain function — pass this to createMock({ brain: cb.brain }). */
   brain: Brain;
+
   /** Wait for the next brain call. Blocks until pi makes an API request. */
   waitForCall(timeoutMs?: number): Promise<PendingCall>;
+
+  /**
+   * Wait for a brain call matching a filter. Non-matching calls stay
+   * buffered for other waiters — no head-of-line blocking.
+   *
+   * ```typescript
+   * // Filter by model name
+   * const call = await cb.waitForCall({ model: "gpt-4" }, 3000);
+   *
+   * // Filter by predicate
+   * const call = await cb.waitForCall(req => req.model.includes("claude"), 3000);
+   * ```
+   */
+  waitForCall(filter: CallFilter | { model?: string; _provider?: string }, timeoutMs?: number): Promise<PendingCall>;
+
+  /** Snapshot of pending (buffered, unresponded) calls. Useful for debugging. */
+  pending(): PendingCall[];
 }
 
 /**
  * Create a brain where each call blocks until you explicitly respond.
  * Gives tests full control over timing and interleaving.
+ *
+ * Supports filtered waiting — when multiple clients hit the brain
+ * concurrently, you can wait for a specific one by model name or
+ * custom predicate. Non-matching calls stay buffered for other waiters.
  *
  * ```typescript
  * const cb = createControllableBrain();
@@ -563,66 +679,116 @@ export interface ControllableBrain {
  * const call = await cb.waitForCall();
  * console.log(call.request.messages); // inspect what pi sent
  * call.respond(text("hello"));        // release the brain
+ *
+ * // Filtered — wait for a specific model
+ * const gptCall = await cb.waitForCall({ model: "gpt-4" }, 3000);
+ * const claudeCall = await cb.waitForCall(req => req.model.includes("claude"), 3000);
  * ```
  */
 export function createControllableBrain(): ControllableBrain {
-  // Queue of calls waiting for a response
-  const pending: Array<{
+  type Entry = {
     request: ApiRequest;
     index: number;
     resolve: (response: BrainResponse) => void;
-  }> = [];
+  };
 
-  // Queue of waiters waiting for a call
-  const waiters: Array<{
+  type Waiter = {
+    filter: CallFilter | null;
     resolve: (call: PendingCall) => void;
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
-  }> = [];
+  };
+
+  // Queue of calls waiting for a response
+  const pending: Entry[] = [];
+
+  // Queue of waiters waiting for a call
+  const waiters: Waiter[] = [];
+
+  function wrap(entry: Entry): PendingCall {
+    return {
+      request: entry.request,
+      index: entry.index,
+      respond: (response: BrainResponse) => entry.resolve(response),
+    };
+  }
+
+  /** Normalize a filter arg into a predicate or null (match-all). */
+  function normalizeFilter(
+    filter: CallFilter | { model?: string; _provider?: string } | null | undefined,
+  ): CallFilter | null {
+    if (!filter) return null;
+    if (typeof filter === "function") return filter;
+    // Object shorthand: { model?, _provider? }
+    return (req: ApiRequest) => {
+      if (filter.model !== undefined && req.model !== filter.model) return false;
+      if (filter._provider !== undefined && req._provider !== filter._provider) return false;
+      return true;
+    };
+  }
 
   const brain: Brain = (request, index) => {
     return new Promise<BrainResponse>((resolve) => {
-      const entry = { request, index, resolve };
+      const entry: Entry = { request, index, resolve };
 
-      // If someone is waiting for a call, deliver immediately
-      if (waiters.length > 0) {
-        const waiter = waiters.shift()!;
-        clearTimeout(waiter.timer);
-        waiter.resolve({
-          request,
-          index,
-          respond: (response: BrainResponse) => resolve(response),
-        });
-      } else {
-        // No one waiting yet — queue the call
-        pending.push(entry);
+      // Try to deliver to the first matching waiter
+      for (let i = 0; i < waiters.length; i++) {
+        const w = waiters[i];
+        if (!w.filter || w.filter(request, index)) {
+          waiters.splice(i, 1);
+          clearTimeout(w.timer);
+          w.resolve(wrap(entry));
+          return;
+        }
       }
+
+      // No matching waiter — buffer the call
+      pending.push(entry);
     });
   };
 
   return {
     brain,
-    waitForCall(timeoutMs = 30_000) {
+
+    waitForCall(
+      filterOrTimeout?: number | CallFilter | { model?: string; _provider?: string },
+      timeoutMs?: number,
+    ): Promise<PendingCall> {
+      // Overload resolution: waitForCall(3000) vs waitForCall(filter, 3000)
+      let filter: CallFilter | null;
+      let timeout: number;
+      if (typeof filterOrTimeout === "number" || filterOrTimeout === undefined) {
+        filter = null;
+        timeout = filterOrTimeout ?? 30_000;
+      } else {
+        filter = normalizeFilter(filterOrTimeout);
+        timeout = timeoutMs ?? 30_000;
+      }
+
       return new Promise<PendingCall>((resolve, reject) => {
-        // If there's already a pending call, deliver immediately
-        if (pending.length > 0) {
-          const entry = pending.shift()!;
-          return resolve({
-            request: entry.request,
-            index: entry.index,
-            respond: (response: BrainResponse) => entry.resolve(response),
-          });
+        // Scan pending for the first matching call
+        for (let i = 0; i < pending.length; i++) {
+          const entry = pending[i];
+          if (!filter || filter(entry.request, entry.index)) {
+            pending.splice(i, 1);
+            return resolve(wrap(entry));
+          }
         }
 
-        // Otherwise wait for the next call
+        // No match yet — register a filtered waiter
         const timer = setTimeout(() => {
           const idx = waiters.findIndex((w) => w.resolve === resolve);
           if (idx >= 0) waiters.splice(idx, 1);
-          reject(new Error(`waitForCall timeout after ${timeoutMs}ms`));
-        }, timeoutMs);
+          const desc = filter ? " (with filter)" : "";
+          reject(new Error(`waitForCall timeout after ${timeout}ms${desc}`));
+        }, timeout);
 
-        waiters.push({ resolve, reject, timer });
+        waiters.push({ filter, resolve, reject, timer });
       });
+    },
+
+    pending(): PendingCall[] {
+      return pending.map(wrap);
     },
   };
 }

@@ -7,6 +7,7 @@
 
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { StringDecoder } from "node:string_decoder";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -66,10 +67,14 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
 
   // ── JSONL parser on stdout ──
   // Uses manual \n splitting — NOT readline (which splits on U+2028/2029).
+  // Uses StringDecoder to correctly handle multi-byte UTF-8 sequences
+  // split across pipe chunks (without it, chunk.toString() corrupts them
+  // into U+FFFD replacement characters).
+  const decoder = new StringDecoder("utf8");
   let buf = "";
 
   proc.stdout!.on("data", (chunk: Buffer) => {
-    buf += chunk.toString();
+    buf += decoder.write(chunk);
     let idx: number;
     while ((idx = buf.indexOf("\n")) !== -1) {
       let line = buf.slice(0, idx);

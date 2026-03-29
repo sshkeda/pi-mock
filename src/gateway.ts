@@ -25,12 +25,13 @@ import {
   type Brain,
   type ApiRequest,
   type BrainResponse,
-  text as textBlock,
+  type HttpErrorBlock,
 } from "./anthropic.js";
 import {
   detectProvider,
   parseRequest,
   serializeResponse,
+  serializeProviderError,
   type ProviderName,
 } from "./providers.js";
 
@@ -158,6 +159,11 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
 
     const apiReq = parseRequest(provider, rawBody);
     apiReq._provider = provider;
+    apiReq._headers = Object.fromEntries(
+      Object.entries(req.headers)
+        .filter(([, v]) => typeof v === "string")
+        .map(([k, v]) => [k, v as string]),
+    );
     apiReq._raw = rawBody;
 
     requests.push(apiReq);
@@ -168,9 +174,39 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
     try {
       response = await brain(apiReq, idx);
     } catch (err: unknown) {
+      // Brain threw an exception — return a proper HTTP 500 error so pi's retry
+      // logic kicks in. Previously this returned text("brain error: ...") which
+      // sent a 200 and pi tried to act on the error text as normal output.
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[gateway] brain error on request #${idx} (${provider}):`, msg);
-      response = textBlock(`brain error: ${msg}`);
+      response = {
+        type: "http_error" as const,
+        status: 500,
+        message: `brain error: ${msg}`,
+      };
+    }
+
+    // HttpErrorBlock — return actual HTTP error status code.
+    // This triggers the Anthropic SDK's error handling → pi's retry logic.
+    if (!Array.isArray(response) && (response as HttpErrorBlock).type === "http_error") {
+      const httpErr = response as HttpErrorBlock;
+      const { contentType: errCt, body: errBody } = serializeProviderError(
+        provider,
+        httpErr.status,
+        httpErr.message ?? "error",
+      );
+      const headers: Record<string, string> = {
+        "Content-Type": errCt,
+        ...(httpErr.headers ?? {}),
+      };
+      // By default, tell the Anthropic SDK not to retry so errors go straight
+      // to pi's own retry logic. This makes fault injection predictable.
+      if (httpErr.bypassSdkRetry !== false && !headers["x-should-retry"]) {
+        headers["x-should-retry"] = "false";
+      }
+      res.writeHead(httpErr.status, headers);
+      res.end(errBody);
+      return;
     }
 
     const { contentType, body } = serializeResponse(provider, response, apiReq.model ?? "mock");

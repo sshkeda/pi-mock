@@ -15,6 +15,11 @@ export {
   writeTool,
   readTool,
   error,
+  httpError,
+  rateLimited,
+  overloaded,
+  serverError,
+  serviceUnavailable,
   toSSE,
   type Brain,
   type BrainResponse,
@@ -23,6 +28,7 @@ export {
   type ThinkingBlock,
   type ToolCallBlock,
   type ErrorBlock,
+  type HttpErrorBlock,
   type ApiRequest,
 } from "./anthropic.js";
 export {
@@ -41,5 +47,24 @@ export {
   detectProvider,
   parseRequest,
   serializeResponse,
+  serializeProviderError,
   type ProviderName,
 } from "./providers.js";
+export {
+  flakyBrain,
+  errorAfter,
+  failFirst,
+  failNth,
+  intermittent,
+  type FlakyOptions,
+} from "./faults.js";
+export {
+  createRecorder,
+  replay,
+  type Recorder,
+  type RecorderOptions,
+  type Transcript,
+  type TranscriptTurn,
+  type TranscriptUsage,
+  type RequestFingerprint,
+} from "./record.js";

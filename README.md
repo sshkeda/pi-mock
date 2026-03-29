@@ -2,13 +2,13 @@
 
 Integration testing harness for [pi](https://github.com/badlogic/pi-mono) extensions.
 
-Spins up a real `pi` process with a mock Anthropic API, full network control, and RPC communication. CLI-first — designed to be easy for AI agents to use.
+Spins up a real `pi` process with a mock LLM API, full network control, and RPC communication. CLI-first — designed to be easy for AI agents to use.
 
 ## How it works
 
 One gateway server that wears three hats:
 
-1. **Mock Anthropic API** — `POST /v1/messages` → your brain function decides the response
+1. **Mock LLM API** — `POST /v1/messages` → your brain function decides the response (Anthropic, OpenAI, Google)
 2. **HTTP forward proxy** — `GET http://...` → check network rules → forward or block
 3. **HTTPS tunnel proxy** — `CONNECT host:443` → check network rules → tunnel or block
 
@@ -47,7 +47,7 @@ pi-mock prompt "run ls in the current directory"
 # Inspect state
 pi-mock events                    # All RPC events
 pi-mock events --since 10         # Events since index 10
-pi-mock requests                  # All Anthropic API requests the brain saw
+pi-mock requests                  # All API requests the brain saw
 pi-mock proxy-log                 # Every proxy request (host, action, timestamp)
 pi-mock status                    # Current state summary
 
@@ -60,6 +60,25 @@ pi-mock stop
 ```bash
 # Start → prompt → print results → stop (all in one)
 pi-mock run --brain ./brain.js -e ./ext.ts "do something"
+```
+
+### Record & Replay
+
+Record a real API session, then replay it deterministically:
+
+```bash
+# Record — forwards to real API, saves transcript
+pi-mock record --model claude-sonnet-4-20250514 -e ./ext.ts -o session.json "build a todo app"
+
+# Replay — uses saved transcript as brain (free, fast, deterministic)
+pi-mock run --brain session.json -e ./ext.ts "build a todo app"
+```
+
+Or hand-write a scenario as JSON:
+
+```bash
+echo '[{"type":"tool_call","name":"bash","input":{"command":"ls"}}]' > scenario.json
+pi-mock run --brain scenario.json -e ./ext.ts "list files"
 ```
 
 ### Management API
@@ -97,6 +116,8 @@ export default (req, index) => {
 };
 ```
 
+JSON files are auto-detected as transcripts (see [Record & Replay](#record--replay-1)).
+
 Built-in brains: `echo` (default), `always`.
 
 ## Programmatic API
@@ -119,7 +140,7 @@ const mock = await createMock({
 
 const events = await mock.run("do something");
 
-mock.requests;     // Anthropic API requests the brain saw
+mock.requests;     // API requests the brain saw
 mock.proxyLog;     // Every proxy request (host, action, timestamp)
 mock.events;       // All RPC events
 
@@ -130,7 +151,206 @@ mock.setNetworkRules([...]);
 // Multiple prompts
 const events2 = await mock.run("now try this");
 
+// Steer/follow-up/abort — test extension intervention flows
+await mock.prompt("start working");
+await mock.steer("also consider edge cases");  // delivered between tool calls
+await mock.followUp("now do part 2");           // triggers new turn after agent finishes
+await mock.abort();                             // cancel current turn
+
+// Raw RPC escape hatch — any command pi supports
+const state = await mock.sendRpc({ type: "get_state" });
+const stats = await mock.sendRpc({ type: "get_session_stats" });
+
 await mock.close();
+```
+
+## Record & Replay
+
+Record a real API session and replay it for deterministic, free, fast testing.
+
+### Recording
+
+```typescript
+import { createMock, createRecorder } from "pi-mock";
+
+const rec = createRecorder({ model: "claude-sonnet-4-20250514" });
+const mock = await createMock({
+  brain: rec.brain,
+  extensions: ["./my-extension.ts"],
+  network: { default: "allow" }, // extensions need real network during recording
+});
+
+await mock.run("build a todo app");
+await rec.save("./session.json");  // saves transcript
+await mock.close();
+```
+
+### Replaying
+
+```typescript
+import { createMock, replay } from "pi-mock";
+
+const mock = await createMock({
+  brain: replay("./session.json"),
+  extensions: ["./my-extension.ts"],
+  sandbox: true, // full isolation — no network needed
+});
+
+await mock.run("build a todo app"); // deterministic, free, fast
+await mock.close();
+```
+
+### Transcript Format
+
+Transcripts are JSON. Three formats are supported — use whichever fits:
+
+**Full format** (from recording):
+```json
+{
+  "version": 1,
+  "recorded": "2026-03-28T...",
+  "meta": { "provider": "anthropic", "model": "claude-sonnet-4-20250514" },
+  "turns": [
+    {
+      "response": [
+        { "type": "tool_call", "name": "bash", "input": { "command": "ls" } }
+      ],
+      "usage": { "input_tokens": 1500, "output_tokens": 200 },
+      "request": { "model": "claude-sonnet-4-20250514", "messageCount": 3, "lastUserPrefix": "build a..." }
+    },
+    {
+      "response": [{ "type": "text", "text": "Done!" }]
+    }
+  ]
+}
+```
+
+**Array of turns** (hand-written):
+```json
+[
+  { "response": [{ "type": "tool_call", "name": "bash", "input": { "command": "ls" } }] },
+  { "response": [{ "type": "text", "text": "Done!" }] }
+]
+```
+
+**Simple shorthand** (hand-written, minimal):
+```json
+[
+  [{ "type": "tool_call", "name": "bash", "input": { "command": "ls" } }],
+  [{ "type": "text", "text": "Done!" }]
+]
+```
+
+Recorded transcripts include request fingerprints for **divergence detection** — if the replay agent sends different requests than were recorded, pi-mock logs a warning.
+
+## Fault Injection
+
+Simulate real-world API failures to test pi's error handling, retry logic, and extension resilience.
+
+### Error Builders
+
+```typescript
+import { httpError, rateLimited, overloaded, serverError, serviceUnavailable } from "pi-mock";
+
+rateLimited(5)              // 429 Too Many Requests + retry-after: 5s
+overloaded()                // 529 Overloaded (Anthropic-specific)
+serverError()               // 500 Internal Server Error
+serviceUnavailable()        // 503 Service Unavailable
+httpError(502, "bad gw")    // Any HTTP error
+```
+
+Errors return proper provider-specific error bodies (Anthropic, OpenAI, Google formats) so the SDKs parse them correctly. By default, `x-should-retry: false` is included to bypass the Anthropic SDK's built-in retries — errors go straight to pi's own retry logic.
+
+### Brain Wrappers
+
+Compose with any existing brain:
+
+```typescript
+import { flakyBrain, errorAfter, failFirst, failNth, intermittent } from "pi-mock";
+import { script, bash, text, rateLimited, overloaded } from "pi-mock";
+
+const inner = script(bash("ls"), text("done"));
+
+// 20% of requests fail with overloaded error (deterministic — seeded PRNG)
+flakyBrain(inner, { rate: 0.2 })
+flakyBrain(inner, { rate: 0.3, error: rateLimited(5), seed: 123 })
+
+// Succeed 3 times, then error forever (API dies mid-session)
+errorAfter(3, inner)
+errorAfter(3, inner, serverError())
+
+// Fail 2 times, then recover (tests retry → recovery)
+failFirst(2, inner)
+failFirst(2, inner, rateLimited(1))
+
+// Only request #3 fails (transient single failure)
+failNth(2, inner)
+
+// Custom pattern: fail, fail, succeed, repeat
+intermittent(inner, { pattern: [false, false, true] })
+```
+
+`flakyBrain` uses a seeded PRNG (default seed: 42) for reproducible test results. Pass `seed` to get a different but still deterministic sequence.
+
+### Example: Test retry recovery
+
+```typescript
+import { createMock, failFirst, script, text } from "pi-mock";
+
+const mock = await createMock({
+  brain: failFirst(1, script(text("recovered!"))),
+});
+
+const events = await mock.run("test retry");
+
+// pi should retry once and recover
+const retries = events.filter(e => e.type === "auto_retry_start");
+console.log(`Retried ${retries.length} time(s)`); // 1
+
+await mock.close();
+```
+
+## Steer, Follow-up & Abort
+
+Test extensions that intervene during agent turns (like pi-manager's steer or pi-council's follow-up):
+
+```typescript
+import { createMock, createControllableBrain, text, bash } from "pi-mock";
+
+const cb = createControllableBrain();
+const mock = await createMock({ brain: cb.brain });
+
+// Start a prompt
+await mock.prompt("build a todo app");
+
+// Brain receives the call — hold it while we steer
+const call = await cb.waitForCall();
+
+// Steer mid-turn (delivered between tool calls)
+await mock.steer("use TypeScript, not JavaScript");
+
+// Release the brain
+call.respond(bash("mkdir todo-app"));
+
+// ... pi executes tool, makes another brain call with steer injected
+const call2 = await cb.waitForCall();
+call2.respond(text("done"));
+await mock.drain();
+
+// Follow-up: triggers a new turn after agent finishes
+await mock.prompt("hello");
+await mock.followUp("also check for errors");
+// Both turns will execute
+
+// Abort: cancel the current turn
+await mock.prompt("start something long");
+await cb.waitForCall();
+await mock.abort();
+// Pi emits agent_end immediately
+
+// Raw RPC: any command pi supports
+const state = await mock.sendRpc({ type: "get_state" });
+console.log(state.data.model); // { provider: "pi-mock", id: "mock" }
 ```
 
 ## Network Isolation (Docker Sandbox)
@@ -169,29 +389,61 @@ pi-mock prompt --state /tmp/test2.json "test scenario B"
 ## Response Builders
 
 ```typescript
-import { text, bash, edit, writeTool, readTool, toolCall, error } from "pi-mock";
+import {
+  text, bash, edit, writeTool, readTool, toolCall, thinking, error,
+  httpError, rateLimited, overloaded, serverError, serviceUnavailable,
+} from "pi-mock";
 
+// Content responses
 text("hello")                           // Text response
+thinking("let me consider...")          // Thinking block
 bash("ls -la")                          // Bash tool call
 bash("sleep 30", 5)                     // Bash with timeout
 edit("file.ts", "old", "new")           // Edit tool call
 writeTool("file.ts", "content")         // Write tool call
 readTool("file.ts")                     // Read tool call
 toolCall("custom", { key: "value" })    // Any tool call
-error("something went wrong")           // Error response
+error("something went wrong")           // SSE error event (200 status)
+
+// HTTP errors (real status codes — trigger pi's retry logic)
+httpError(502, "bad gateway")           // Any HTTP error
+rateLimited(5)                          // 429 + retry-after header
+overloaded()                            // 529 (Anthropic-specific)
+serverError()                           // 500
+serviceUnavailable()                    // 503
 
 // Multiple blocks in one response
-[bash("ls"), text("done")]
+[thinking("hmm..."), bash("ls"), text("done")]
 ```
 
 ## Brain Helpers
 
 ```typescript
-import { script, always, echo } from "pi-mock";
+import {
+  script, always, echo, createControllableBrain,
+  flakyBrain, errorAfter, failFirst, failNth, intermittent,
+  createRecorder, replay,
+} from "pi-mock";
 
+// Basic
 script(bash("ls"), text("done"))   // Returns responses in order
 always(text("hello"))              // Same response forever
 echo()                             // Echoes back the user's message
+
+// Controllable (step through requests manually)
+const cb = createControllableBrain();
+// ... cb.waitForCall() → call.respond(text("hi"))
+
+// Fault injection
+flakyBrain(inner, { rate: 0.2 })   // Random failures (seeded PRNG)
+errorAfter(3, inner)               // Die after 3 successes
+failFirst(2, inner)                // Fail 2x then recover
+failNth(1, inner)                  // Only request #1 fails
+intermittent(inner, { pattern })   // Custom fail/succeed cycle
+
+// Record & replay
+createRecorder({ model: "..." })   // Record real API → transcript
+replay("./session.json")           // Replay transcript as brain
 ```
 
 ## License

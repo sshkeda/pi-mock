@@ -391,6 +391,95 @@ export function serializeResponse(
   }
 }
 
+// ─── Provider-specific error serialization ───────────────────────────
+
+/**
+ * Format an HTTP error body the way each provider's real API would.
+ * This ensures the Anthropic/OpenAI/Google SDKs parse the error correctly
+ * and include meaningful error messages that pi's retry logic can match.
+ */
+export function serializeProviderError(
+  provider: ProviderName,
+  status: number,
+  message: string,
+): { contentType: string; body: string } {
+  switch (provider) {
+    case "anthropic":
+      return {
+        contentType: "application/json",
+        body: JSON.stringify({
+          type: "error",
+          error: {
+            type: anthropicErrorType(status),
+            message,
+          },
+        }),
+      };
+
+    case "openai":
+    case "openai-responses":
+      return {
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            message,
+            type: openaiErrorType(status),
+            code: String(status),
+          },
+        }),
+      };
+
+    case "google":
+      return {
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: status,
+            message,
+            status: googleErrorStatus(status),
+          },
+        }),
+      };
+
+    default:
+      return {
+        contentType: "application/json",
+        body: JSON.stringify({ type: "error", error: { type: "api_error", message } }),
+      };
+  }
+}
+
+function anthropicErrorType(status: number): string {
+  switch (status) {
+    case 400: return "invalid_request_error";
+    case 401: return "authentication_error";
+    case 403: return "permission_error";
+    case 404: return "not_found_error";
+    case 429: return "rate_limit_error";
+    case 529: return "overloaded_error";
+    default: return status >= 500 ? "api_error" : "invalid_request_error";
+  }
+}
+
+function openaiErrorType(status: number): string {
+  switch (status) {
+    case 401: return "authentication_error";
+    case 429: return "rate_limit_error";
+    default: return status >= 500 ? "server_error" : "invalid_request_error";
+  }
+}
+
+function googleErrorStatus(status: number): string {
+  switch (status) {
+    case 400: return "INVALID_ARGUMENT";
+    case 401: return "UNAUTHENTICATED";
+    case 403: return "PERMISSION_DENIED";
+    case 404: return "NOT_FOUND";
+    case 429: return "RESOURCE_EXHAUSTED";
+    default: return status >= 500 ? "INTERNAL" : "UNKNOWN";
+  }
+}
+
 export function parseRequest(
   provider: ProviderName,
   body: Record<string, unknown>,
