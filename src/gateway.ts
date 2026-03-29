@@ -279,6 +279,20 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
     const [host, portStr] = (req.url ?? "").split(":");
     const port = parseInt(portStr) || 443;
     const { action } = resolve(host);
+
+    // "intercept" is not possible for HTTPS CONNECT tunnels (would require MITM).
+    // Treat as "block" and log a warning so the user knows.
+    if (action === "intercept") {
+      log(host, "CONNECT", "block", req.url);
+      console.error(
+        `[pi-mock] HTTPS intercept not supported for CONNECT ${host}:${port} — ` +
+        `blocking instead. Intercepts only work for plain HTTP requests.`,
+      );
+      socket.write("HTTP/1.1 403 Blocked by pi-mock (HTTPS intercept not supported)\r\n\r\n");
+      socket.end();
+      return;
+    }
+
     log(host, "CONNECT", action, req.url);
 
     if (action === "block") {
