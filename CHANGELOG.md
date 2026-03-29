@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 (2026-03-29)
+## 1.0.0 (2026-03-29)
 
 Initial public release.
 
