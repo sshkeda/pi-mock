@@ -135,6 +135,10 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
   let lastError: string | undefined;
 
   while (Date.now() < deadline) {
+    // Check for spawn errors (e.g. binary not found)
+    const spawnError = (proc as any)._spawnError as Error | undefined;
+    if (spawnError) throw spawnError;
+
     // Check if process died
     if (proc.exitCode !== null) {
       throw new Error(`pi exited with code ${proc.exitCode} during startup`);
@@ -164,6 +168,7 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
 export async function createMock(options: MockOptions): Promise<Mock> {
   let closed = false;
   let eventCursor = 0; // tracks start of current cycle for drain()
+  let requestCursor = 0; // tracks position for waitForRequest() — advances after each match
 
   // Live network rules — separate from options so /_/intercept can mutate them
   let activeRules: NetworkRule[] = [...(options.network?.rules ?? [])];
