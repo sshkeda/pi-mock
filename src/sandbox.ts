@@ -9,7 +9,7 @@
  *   - sandbox: false  → local child process (default, faster, no isolation)
  */
 
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { resolve, basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
@@ -121,10 +121,25 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     ...(config.env ?? {}),
   };
 
-  const child = spawn(config.piBinary ?? "pi", args, {
+  const piBinary = config.piBinary ?? "pi";
+  const child = spawn(piBinary, args, {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: config.cwd ?? process.cwd(),
     env,
+  });
+
+  // Catch spawn errors (e.g. ENOENT when pi binary is not installed)
+  // to prevent unhandled error events from crashing the process.
+  child.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") {
+      const msg =
+        `pi binary not found: "${piBinary}". ` +
+        `Install it with: npm install -g @mariozechner/pi-coding-agent` +
+        (piBinary === "pi" ? "" : `, or check that "${piBinary}" is on your PATH.`);
+      child.emit("close", 1);
+      // Attach the friendly message so waitForReady can surface it
+      (child as any)._spawnError = new Error(msg);
+    }
   });
 
   const stderr: string[] = [];
@@ -142,16 +157,26 @@ const DEFAULT_IMAGE = "pi-mock-sandbox";
  * Returns the image name.
  */
 export function ensureImage(image: string = DEFAULT_IMAGE): string {
-  try {
-    execSync(`docker image inspect ${image} > /dev/null 2>&1`, { stdio: "ignore" });
-    return image;
-  } catch {
-    // Build from our Dockerfile
-    const dockerfilePath = findDockerfile();
-    console.error(`[pi-mock] Building sandbox image "${image}" from ${dockerfilePath}...`);
-    execSync(`docker build -t ${image} ${dirname(dockerfilePath)}`, { stdio: "inherit" });
-    return image;
+  const inspectResult = spawnSync("docker", ["image", "inspect", image], {
+    stdio: "ignore",
+  });
+
+  if (inspectResult.status === 0) return image;
+
+  // Build from our Dockerfile
+  const dockerfilePath = findDockerfile();
+  console.error(`[pi-mock] Building sandbox image "${image}" from ${dockerfilePath}...`);
+  const buildResult = spawnSync(
+    "docker",
+    ["build", "-t", image, dirname(dockerfilePath)],
+    { stdio: "inherit" },
+  );
+
+  if (buildResult.status !== 0) {
+    throw new Error(`Failed to build Docker image "${image}" (exit code ${buildResult.status})`);
   }
+
+  return image;
 }
 
 function findDockerfile(): string {
@@ -286,10 +311,6 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
  * Check if Docker is available.
  */
 export function hasDocker(): boolean {
-  try {
-    execSync("docker version > /dev/null 2>&1", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  const result = spawnSync("docker", ["version"], { stdio: "ignore" });
+  return result.status === 0;
 }
