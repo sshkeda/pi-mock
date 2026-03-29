@@ -14,6 +14,16 @@ One gateway server that wears three hats:
 
 With Docker sandbox mode, iptables blocks all outbound traffic except to the gateway. The gateway IS the internet.
 
+## Prerequisites
+
+Requires [pi](https://github.com/mariozechner/pi-mono) installed globally:
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+```
+
+For Docker sandbox mode, [Docker](https://docs.docker.com/get-docker/) must be installed.
+
 ## Install
 
 ```bash
@@ -83,18 +93,22 @@ pi-mock run --brain scenario.json -e ./ext.ts "list files"
 
 ### Management API
 
-The gateway exposes HTTP endpoints — use `curl` directly:
+The gateway exposes authenticated HTTP endpoints. Read the token from the state file:
 
 ```bash
-PORT=$(pi-mock start --brain echo 2>/dev/null &; sleep 3; cat /tmp/pi-mock.json | jq -r .port)
+# Start in background — port is printed to stdout
+pi-mock start --brain echo &
+STATE=$(cat "$(node -e "process.stdout.write(require('os').tmpdir())")/pi-mock.json")
+PORT=$(echo $STATE | jq -r .port)
+TOKEN=$(echo $STATE | jq -r .token)
 
-curl localhost:$PORT/_/prompt   -d '{"message": "hello"}'
-curl localhost:$PORT/_/events
-curl localhost:$PORT/_/requests
-curl localhost:$PORT/_/proxy-log
-curl localhost:$PORT/_/status
-curl localhost:$PORT/_/network  -d '{"rules": [{"match": "npmjs.org"}], "default": "block"}'
-curl -X POST localhost:$PORT/_/stop
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/prompt   -d '{"message": "hello"}'
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/events
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/requests
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/proxy-log
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/status
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/network  -d '{"rules": [{"match": "npmjs.org"}], "default": "block"}'
+curl -H "x-pi-mock-token: $TOKEN" -X POST localhost:$PORT/_/stop
 ```
 
 ## Brain Files

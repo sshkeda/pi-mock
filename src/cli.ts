@@ -20,7 +20,7 @@
  */
 
 import { resolve } from "node:path";
-import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdtempSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdtempSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -42,7 +42,7 @@ interface StateFile {
 
 function writeState(port: number, token: string, file: string) {
   const state: StateFile = { port, pid: process.pid, token, startedAt: new Date().toISOString() };
-  writeFileSync(file, JSON.stringify(state, null, 2));
+  writeFileSync(file, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
 function readState(file: string): StateFile {
@@ -238,13 +238,7 @@ async function cmdStart(argv: string[]) {
   console.error(`[pi-mock] State:    ${stateFile}`);
   console.error(`[pi-mock] Mode:     ${options.sandbox ? "docker sandbox" : "local"}`);
   console.error(`[pi-mock]`);
-  console.error(`[pi-mock] Management API:`);
-  console.error(`[pi-mock]   curl localhost:${mock.port}/_/prompt  -d '{"message":"..."}'`);
-  console.error(`[pi-mock]   curl localhost:${mock.port}/_/events`);
-  console.error(`[pi-mock]   curl localhost:${mock.port}/_/requests`);
-  console.error(`[pi-mock]   curl localhost:${mock.port}/_/proxy-log`);
-  console.error(`[pi-mock]   curl localhost:${mock.port}/_/status`);
-  console.error(`[pi-mock]   curl -X POST localhost:${mock.port}/_/stop`);
+  console.error(`[pi-mock] Use the CLI to interact: pi-mock prompt "message"`);
 
   // Print port to stdout for capture: PORT=$(pi-mock start ... 2>/dev/null)
   console.log(mock.port);
@@ -482,7 +476,7 @@ Record options:
   --api-key <key>           API key (default: from ANTHROPIC_API_KEY / OPENAI_API_KEY)
 
 Other options:
-  --state <file>            State file path. Default: /tmp/pi-mock.json
+  --state <file>            State file path. Default: <tmpdir>/pi-mock.json
   --timeout <ms>            Prompt/run timeout. Default: 120000
   --since <n>               For events: only show events since index N.
 
@@ -519,6 +513,15 @@ async function main() {
 
   if (!command || command === "--help" || command === "-h") {
     printHelp();
+    process.exit(0);
+  }
+
+  if (command === "--version" || command === "-v") {
+    const { readFileSync: readFs } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const pkg = JSON.parse(readFs(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf-8"));
+    console.log(pkg.version);
     process.exit(0);
   }
 

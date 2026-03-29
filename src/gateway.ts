@@ -76,6 +76,8 @@ export interface GatewayConfig {
   rules?: NetworkRule[];
   default?: NetworkAction;
   port?: number;
+  /** Bind address. Default: "127.0.0.1". Use "0.0.0.0" for Docker sandbox access. */
+  host?: string;
   onManagement?: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void;
 }
 
@@ -339,7 +341,7 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
   });
 
   await new Promise<void>((resolve) => {
-    server.listen(config.port ?? 0, "0.0.0.0", resolve);
+    server.listen(config.port ?? 0, config.host ?? "127.0.0.1", resolve);
   });
 
   const addr = server.address();

@@ -331,6 +331,7 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     rules: options.network?.rules,
     default: options.network?.default ?? "block",
     port: options.port,
+    host: options.sandbox ? "0.0.0.0" : "127.0.0.1",
     onManagement,
   });
 

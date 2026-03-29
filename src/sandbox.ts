@@ -11,6 +11,7 @@
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { resolve, basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -156,7 +157,7 @@ export function ensureImage(image: string = DEFAULT_IMAGE): string {
 function findDockerfile(): string {
   // Look for Dockerfile relative to this module
   const candidates = [
-    resolve(dirname(new URL(import.meta.url).pathname), "..", "Dockerfile"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "Dockerfile"),
     resolve(process.cwd(), "Dockerfile"),
   ];
   for (const p of candidates) {
