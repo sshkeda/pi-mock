@@ -8,9 +8,9 @@ Spins up a real `pi` process with a mock LLM API, full network control, and RPC 
 
 One gateway server that wears three hats:
 
-1. **Mock LLM API** — `POST /v1/messages` → your brain function decides the response (Anthropic, OpenAI, Google)
-2. **HTTP forward proxy** — `GET http://...` → check network rules → forward or block
-3. **HTTPS tunnel proxy** — `CONNECT host:443` → check network rules → tunnel or block
+1. **Mock LLM API** — `POST /v1/messages` → your brain function decides the response (Anthropic format, with OpenAI/Google response translation)
+2. **HTTP forward proxy** — `GET http://...` → check network rules → forward, block, or intercept
+3. **HTTPS tunnel proxy** — `CONNECT host:443` → check network rules → tunnel or block (intercept not supported)
 
 With Docker sandbox mode, iptables blocks all outbound traffic except to the gateway. The gateway IS the internet.
 
@@ -459,6 +459,25 @@ intermittent(inner, { pattern })   // Custom fail/succeed cycle
 createRecorder({ model: "..." })   // Record real API → transcript
 replay("./session.json")           // Replay transcript as brain
 ```
+
+## Limitations & Security
+
+### Network
+
+- **Sandbox mode binds to `0.0.0.0`** — The gateway must listen on all interfaces so the Docker container can reach it via `host.docker.internal`. This means the mock LLM API and HTTP proxy are accessible from your local network while running. The management API (`/_/` endpoints) is token-protected, but the proxy itself is not. Run sandbox mode on trusted networks only, or add host firewall rules to restrict the gateway port.
+- **HTTPS intercept is not supported** — Network rules with `action: "intercept"` only work for plain HTTP requests. HTTPS `CONNECT` tunnels cannot be intercepted without MITM (no fake certificates). Intercept rules on HTTPS hosts will be treated as `"block"` with a warning logged.
+- **Sandbox runs as root** — The Docker container runs as root with `NET_ADMIN` capability (needed for iptables). The working directory is mounted read-write at `/work`. This is a testing tool, not a security sandbox.
+
+### Providers
+
+- **pi always sends Anthropic-format requests** — The mock spawns pi with the `pi-mock` provider using the `anthropic-messages` API. The gateway translates responses into the correct format for each provider, but the incoming request from pi is always Anthropic-shaped.
+- **Record/replay is Anthropic and OpenAI only** — `createRecorder()` supports forwarding to Anthropic and OpenAI. Google is not yet supported for recording. The raw request from pi is Anthropic-format, so OpenAI recording may have issues with tool schema translation.
+- **`script()` and `replay()` throw on exhaustion** — If the brain runs out of scripted/recorded responses, it throws an error instead of returning silently. This prevents false-positive tests.
+
+### Compatibility
+
+- **Tested with pi `>=0.62.0`** — The Dockerfile pins `@mariozechner/pi-coding-agent@0.62`. Newer versions should work but aren't guaranteed. If pi's RPC protocol or event shapes change, tests may break.
+- **macOS and Linux only** — Docker sandbox mode relies on iptables and `host.docker.internal`. Windows (native, not WSL2) is untested.
 
 ## License
 
