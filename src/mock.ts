@@ -153,7 +153,9 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
   }
 
   throw new Error(
-    `pi failed to start within ${timeoutMs}ms. Last error: ${lastError ?? "unknown"}`,
+    `pi failed to start within ${timeoutMs}ms. Last error: ${lastError ?? "unknown"}\n` +
+    `  Ensure pi is installed: npm install -g @mariozechner/pi-coding-agent\n` +
+    `  Or increase timeout with startupTimeoutMs option.`,
   );
 }
 
@@ -532,10 +534,11 @@ export async function createMock(options: MockOptions): Promise<Mock> {
 
     waitForRequest(pred, timeoutMs = 30_000) {
       return new Promise((resolve, reject) => {
-        // Scan existing requests first — same pattern as rpc.waitFor().
-        // Without this, requests that arrived before waitForRequest() is called are missed.
-        for (let i = 0; i < gw.requests.length; i++) {
+        // Scan from cursor (not 0) — so repeated calls return the NEXT match,
+        // not the same first match every time.
+        for (let i = requestCursor; i < gw.requests.length; i++) {
           if (!pred || pred(gw.requests[i], i)) {
+            requestCursor = i + 1;
             return resolve({ request: gw.requests[i], index: i });
           }
         }
@@ -547,6 +550,7 @@ export async function createMock(options: MockOptions): Promise<Mock> {
 
         const unsub = gw.onRequest((req, index) => {
           if (!pred || pred(req, index)) {
+            requestCursor = index + 1;
             clearTimeout(timer);
             unsub();
             resolve({ request: req, index });

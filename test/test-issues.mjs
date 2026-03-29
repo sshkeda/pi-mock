@@ -2,6 +2,7 @@ import {
   createMock, script, text, bash, flakyBrain, overloaded,
   createControllableBrain,
 } from "../dist/index.js";
+// bash is already imported above — used by the waitForRequest cursor test
 
 let passed = 0, failed = 0, skipped = 0;
 
@@ -169,6 +170,45 @@ await test("waitForRequest misses request that already arrived", async () => {
     await mock.drain(10000);
 
     assert(found === true, "waitForRequest missed an already-arrived request");
+  } finally {
+    await mock.close();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// Issue 7: waitForRequest cursor — repeated calls return same request
+// GPT found this: waitForRequest scans from 0 every time, so the
+// second call returns the same request as the first.
+// ═══════════════════════════════════════════════════════════════════
+await test("waitForRequest returns different requests on repeated calls", async () => {
+  const cb = createControllableBrain();
+  const mock = await createMock({
+    brain: cb.brain,
+    startupTimeoutMs: 15000,
+  });
+
+  try {
+    // Send first prompt — pi makes API request #0
+    await mock.prompt("first");
+    const call1 = await cb.waitForCall(5000);
+
+    // waitForRequest should find request #0
+    const r1 = await mock.waitForRequest(undefined, 2000);
+    assert(r1.index === 0, `first waitForRequest should return index 0, got ${r1.index}`);
+
+    // Respond so pi makes another request
+    call1.respond(bash("echo hello"));
+    const call2 = await cb.waitForCall(10000);
+
+    // waitForRequest should find request #1, NOT request #0 again
+    const r2 = await mock.waitForRequest(undefined, 2000);
+    assert(r2.index === 1, `second waitForRequest should return index 1, got ${r2.index}`);
+
+    process.stderr.write(`  (r1.index=${r1.index}, r2.index=${r2.index}) `);
+
+    // Clean up
+    call2.respond(text("done"));
+    await mock.drain(10000);
   } finally {
     await mock.close();
   }
