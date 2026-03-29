@@ -194,6 +194,28 @@ function parseArgs(argv: string[]) {
 
 async function cmdStart(argv: string[]) {
   const { args } = parseArgs(argv);
+
+  if (args["help"] || args["h"]) {
+    console.log(`pi-mock start — start gateway + pi, stay running
+
+Usage: pi-mock start [options]
+
+Options:
+  --brain <file|echo>       Brain: JS file or built-in name. Default: echo
+  -e, --extension <path>    Extension to load (repeatable).
+  --sandbox                 Use Docker container with network isolation.
+  --network-default <action> Default network action: allow|block. Default: block
+  --allow <host>            Allow network access to host (repeatable).
+  --block <host>            Block network access to host (repeatable).
+  --port <n>                Gateway port. 0 = random. Default: 0
+  --cwd <dir>               Working directory for pi.
+  --image <name>            Docker image. Default: auto-build "pi-mock-sandbox"
+  --state <file>            State file path. Default: <tmpdir>/pi-mock.json
+  --startup-timeout <ms>    Max wait for pi to start. Default: 15000
+`);
+    process.exit(0);
+  }
+
   const stateFile = (args["state"] as string) ?? DEFAULT_STATE_FILE;
 
   // Load brain
@@ -261,6 +283,28 @@ async function cmdStart(argv: string[]) {
 
 async function cmdRecord(argv: string[]) {
   const { args, positional } = parseArgs(argv);
+
+  if (args["help"] || args["h"]) {
+    console.log(`pi-mock record — record a real API session → transcript JSON
+
+Usage: pi-mock record [options] <prompt message>
+
+Options:
+  --model <id>              Real model ID (required). e.g. claude-sonnet-4-20250514
+  -o, --output <file>       Transcript output path. Default: session.json
+  --api-key <key>           API key (default: from ANTHROPIC_API_KEY / OPENAI_API_KEY)
+  -e, --extension <path>    Extension to load (repeatable).
+  --sandbox                 Use Docker container with network isolation.
+  --network-default <action> Default network action: allow|block. Default: allow
+  --allow <host>            Allow network access to host (repeatable).
+  --port <n>                Gateway port. 0 = random. Default: 0
+  --cwd <dir>               Working directory for pi.
+  --image <name>            Docker image. Default: auto-build "pi-mock-sandbox"
+  --timeout <ms>            Run timeout. Default: 300000
+`);
+    process.exit(0);
+  }
+
   const message = positional.join(" ");
   if (!message) {
     console.error("Usage: pi-mock record [options] <prompt message>");
@@ -329,6 +373,27 @@ async function cmdRecord(argv: string[]) {
 
 async function cmdRun(argv: string[]) {
   const { args, positional } = parseArgs(argv);
+
+  if (args["help"] || args["h"]) {
+    console.log(`pi-mock run — one-shot: start → prompt → print events → stop
+
+Usage: pi-mock run [options] <prompt message>
+
+Options:
+  --brain <file|echo>       Brain: JS file or built-in name. Default: echo
+  -e, --extension <path>    Extension to load (repeatable).
+  --sandbox                 Use Docker container with network isolation.
+  --network-default <action> Default network action: allow|block. Default: block
+  --allow <host>            Allow network access to host (repeatable).
+  --block <host>            Block network access to host (repeatable).
+  --port <n>                Gateway port. 0 = random. Default: 0
+  --cwd <dir>               Working directory for pi.
+  --image <name>            Docker image. Default: auto-build "pi-mock-sandbox"
+  --timeout <ms>            Run timeout. Default: 120000
+`);
+    process.exit(0);
+  }
+
   const message = positional.join(" ");
   if (!message) {
     console.error("Usage: pi-mock run [options] <prompt message>");

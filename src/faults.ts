@@ -166,11 +166,16 @@ export function intermittent(
   const err = options.error ?? overloaded();
   const pattern = options.pattern;
   let count = 0;
+  let errorsSeen = 0;
 
   return (request, index) => {
     const shouldSucceed = pattern[count % pattern.length];
     count++;
-    if (!shouldSucceed) return err;
-    return inner(request, index);
+    if (!shouldSucceed) {
+      errorsSeen++;
+      return err;
+    }
+    // Adjust index for inner brain — skip the error slots so script() cursors stay in sync
+    return inner(request, index - errorsSeen);
   };
 }

@@ -2,7 +2,10 @@ import {
   createMock, script, bash, text, replay,
   flakyBrain, failFirst, errorAfter, rateLimited, overloaded, serverError,
 } from "../dist/index.js";
-import { writeFileSync, unlinkSync } from "fs";
+import { writeFileSync, unlinkSync, mkdirSync } from "fs";
+
+// Ensure temp dir exists (hermetic on clean machines)
+mkdirSync("/tmp/pi-mock-e2e", { recursive: true });
 
 const TIMEOUT = 30_000;
 let passed = 0;

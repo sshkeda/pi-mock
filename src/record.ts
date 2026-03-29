@@ -16,7 +16,8 @@
  *   await mock2.run("do something");  // deterministic, free, fast
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import {
   type Brain,
   type ApiRequest,
@@ -451,7 +452,7 @@ export function createRecorder(options: RecorderOptions): Recorder {
     brain,
     transcript,
     async save(path: string) {
-      writeFileSync(path, JSON.stringify(transcript, null, 2));
+      await writeFile(path, JSON.stringify(transcript, null, 2));
     },
   };
 }
@@ -509,7 +510,10 @@ export function replay(
 
   return (request, _index) => {
     if (cursor >= turns.length) {
-      return text("(replay exhausted — no more recorded responses)");
+      throw new Error(
+        `replay() exhausted: transcript has ${turns.length} turns, ` +
+        `but brain was called ${cursor + 1} times. The test diverged from the recording.`,
+      );
     }
 
     const turn = turns[cursor];
