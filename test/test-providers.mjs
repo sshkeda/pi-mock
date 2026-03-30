@@ -146,7 +146,12 @@ await test("parseRequest — OpenAI Responses API (array input)", () => {
   assert(req.messages.length === 3, `messages: ${req.messages.length}`);
   assert(req.messages[0].content === "hello", `first msg: ${req.messages[0].content}`);
   assert(req.messages[1].role === "assistant", `function_call role: ${req.messages[1].role}`);
-  assert(req.messages[2].content === "file1.txt", `output: ${req.messages[2].content}`);
+  assert(Array.isArray(req.messages[1].content), `function_call content should be structured array`);
+  assert(req.messages[1].content[0].type === "function_call", `function_call content type: ${req.messages[1].content[0].type}`);
+  assert(req.messages[1].content[0].name === "bash", `function_call name: ${req.messages[1].content[0].name}`);
+  assert(req.messages[2].role === "tool", `function_call_output role: ${req.messages[2].role}`);
+  assert(Array.isArray(req.messages[2].content), `function_call_output content should be structured array`);
+  assert(req.messages[2].content[0].output === "file1.txt", `output: ${req.messages[2].content[0].output}`);
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -151,6 +151,29 @@ export function parseGoogleRequest(body: Record<string, unknown>): ApiRequest {
   const contents = (body.contents as Array<Record<string, unknown>>) ?? [];
   const messages = contents.map((c) => {
     const parts = (c.parts as Array<Record<string, unknown>>) ?? [];
+    const hasFunctionParts = parts.some((p) => p.functionCall || p.functionResponse);
+
+    if (hasFunctionParts) {
+      // Mixed content — preserve tool parts so the brain can see tool interactions
+      const contentBlocks: Array<Record<string, unknown>> = [];
+      for (const p of parts) {
+        if (typeof p.text === "string") {
+          contentBlocks.push({ type: "text", text: p.text });
+        } else if (p.functionCall) {
+          const fc = p.functionCall as Record<string, unknown>;
+          contentBlocks.push({ type: "function_call", name: fc.name, args: fc.args });
+        } else if (p.functionResponse) {
+          const fr = p.functionResponse as Record<string, unknown>;
+          contentBlocks.push({ type: "function_response", name: fr.name, response: fr.response });
+        }
+      }
+      return {
+        role: (c.role as string) === "model" ? "assistant" : "user",
+        content: contentBlocks,
+      };
+    }
+
+    // Text-only — join as string
     const textParts = parts
       .filter((p) => typeof p.text === "string")
       .map((p) => p.text as string);
@@ -270,9 +293,24 @@ export function parseOpenAIResponsesRequest(body: Record<string, unknown>): ApiR
           .map(c => c.text as string);
         messages.push({ role: (item.role as string) ?? "user", content: textParts?.join("") ?? "" });
       } else if (item.type === "function_call") {
-        messages.push({ role: "assistant", content: `[tool_call: ${item.name}(${item.arguments})]` });
+        messages.push({
+          role: "assistant",
+          content: [{
+            type: "function_call",
+            call_id: item.call_id as string,
+            name: item.name as string,
+            arguments: item.arguments as string,
+          }],
+        });
       } else if (item.type === "function_call_output") {
-        messages.push({ role: "user", content: (item.output as string) ?? "" });
+        messages.push({
+          role: "tool",
+          content: [{
+            type: "function_call_output",
+            call_id: item.call_id as string,
+            output: (item.output as string) ?? "",
+          }],
+        });
       } else if (typeof item.role === "string") {
         // Plain message with role + content
         const content = item.content;
