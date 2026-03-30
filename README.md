@@ -111,6 +111,8 @@ curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/requests
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/proxy-log
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/status
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/network  -d '{"rules": [{"match": "npmjs.org"}], "default": "block"}'
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercept -d '{"host": "api.example.com", "body": "{\"ok\":true}"}'
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercepts
 curl -H "x-pi-mock-token: $TOKEN" -X POST localhost:$PORT/_/stop
 ```
 
@@ -160,6 +162,10 @@ const events = await mock.run("do something");
 mock.requests;     // API requests the brain saw
 mock.proxyLog;     // Every proxy request (host, action, timestamp)
 mock.events;       // All RPC events
+mock.stderr;       // Pi's stderr output lines
+mock.port;         // Gateway port
+mock.url;          // Gateway URL (http://127.0.0.1:PORT)
+mock.token;        // Management API auth token
 
 // Mid-test mutations
 mock.setBrain(newBrain);
@@ -173,6 +179,17 @@ await mock.prompt("start working");
 await mock.steer("also consider edge cases");  // delivered between tool calls
 await mock.followUp("now do part 2");           // triggers new turn after agent finishes
 await mock.abort();                             // cancel current turn
+
+// Wait for specific events or brain requests
+const toolEvent = await mock.waitFor(e => e.type === "tool_call");
+const { request, index } = await mock.waitForRequest((req, i) => i === 0);
+
+// Test helper methods
+await mock.setAutoRetry(false);                 // disable pi's auto-retry on transient errors
+await mock.emitEvent("clock:advance", { ms: 300_000 }); // emit on pi's extension event bus
+await mock.invokeCommand("my-command", "args"); // invoke an extension command (no LLM turn)
+await mock.setActiveTools(["bash", "read"]);    // restrict active tools
+await mock.setActiveTools("*");                 // restore all tools
 
 // Raw RPC escape hatch — any command pi supports
 const state = await mock.sendRpc({ type: "get_state" });
@@ -343,6 +360,13 @@ await mock.prompt("build a todo app");
 // Brain receives the call — hold it while we steer
 const call = await cb.waitForCall();
 
+// Filtered waiting — useful when multiple clients hit the brain concurrently
+const gptCall = await cb.waitForCall({ model: "gpt-4" }, 3000);
+const claudeCall = await cb.waitForCall(req => req.model.includes("claude"), 3000);
+
+// Inspect buffered calls
+cb.pending(); // snapshot of unresponded calls
+
 // Steer mid-turn (delivered between tool calls)
 await mock.steer("use TypeScript, not JavaScript");
 
@@ -389,6 +413,53 @@ Network rules control what the proxy allows through:
 
 ```bash
 pi-mock start --sandbox --network-default block --allow registry.npmjs.org --allow github.com
+```
+
+### HTTP Intercepts
+
+Intercept rules return custom responses instead of forwarding to the real server (HTTP only, not HTTPS):
+
+```typescript
+import { createMock, script, text } from "pi-mock";
+
+const mock = await createMock({
+  brain: script(text("done")),
+  network: {
+    default: "block",
+    rules: [
+      // Static response
+      {
+        match: "api.example.com",
+        action: "intercept",
+        response: { status: 200, body: '{"ok": true}', headers: { "Content-Type": "application/json" } },
+      },
+      // Dynamic handler
+      {
+        match: "data.example.com",
+        action: "intercept",
+        handler: (host, method, path, headers) => ({
+          status: 200,
+          body: `intercepted ${method} ${path}`,
+        }),
+      },
+    ],
+  },
+});
+```
+
+Intercepts can also be managed at runtime via the management API:
+
+```bash
+# Add/update an intercept
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercept \
+  -d '{"host": "api.example.com", "body": "{\"mock\": true}", "status": 200}'
+
+# List current intercepts
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercepts
+
+# Remove an intercept
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercept \
+  -d '{"host": "api.example.com", "remove": true}'
 ```
 
 ## Parallel Testing
@@ -450,6 +521,8 @@ echo()                             // Echoes back the user's message
 // Controllable (step through requests manually)
 const cb = createControllableBrain();
 // ... cb.waitForCall() → call.respond(text("hi"))
+// ... cb.waitForCall({ model: "gpt-4" }) → filtered waiting
+// ... cb.pending() → inspect buffered calls
 
 // Fault injection
 flakyBrain(inner, { rate: 0.2 })   // Random failures (seeded PRNG)
@@ -475,7 +548,8 @@ replay("./session.json")           // Replay transcript as brain
 
 - **pi always sends Anthropic-format requests** — The mock spawns pi with the `pi-mock` provider using the `anthropic-messages` API. The gateway translates responses into the correct format for each provider, but the incoming request from pi is always Anthropic-shaped.
 - **Record/replay is Anthropic and OpenAI only** — `createRecorder()` supports forwarding to Anthropic and OpenAI. Google is not yet supported for recording. The raw request from pi is Anthropic-format, so OpenAI recording may have issues with tool schema translation.
-- **`script()` and `replay()` throw on exhaustion** — If the brain runs out of scripted/recorded responses, it throws an error instead of returning silently. This prevents false-positive tests.
+- **`script()` returns a fallback on exhaustion** — If a `script()` brain runs out of responses, it returns `text("(script exhausted)")` instead of throwing. Check for this in assertions if your test expects exact response counts.
+- **`replay()` throws on exhaustion** — If a `replay()` brain is called more times than there are recorded turns, it throws an error. This prevents false-positive tests by failing loudly when the test diverges from the recording.
 
 ### Compatibility
 
