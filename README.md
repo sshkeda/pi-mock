@@ -1,5 +1,8 @@
 # pi-mock
 
+[![npm version](https://img.shields.io/npm/v/pi-mock.svg)](https://www.npmjs.com/package/pi-mock)
+[![license](https://img.shields.io/npm/l/pi-mock.svg)](https://github.com/sshkeda/pi-mock/blob/main/LICENSE)
+
 Integration testing harness for [pi](https://github.com/badlogic/pi-mono) extensions.
 
 Spins up a real `pi` process with a mock LLM API, full network control, and RPC communication. CLI-first — designed to be easy for AI agents to use.
