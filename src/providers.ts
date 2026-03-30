@@ -187,14 +187,24 @@ export function googleToSSE(response: BrainResponse, _model: string): string {
   const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
   const out: string[] = [];
 
-  for (const b of blocks) {
+  // Filter to emittable blocks; warn about dropped thinking blocks
+  const emittable = blocks.filter(b => b.type === "text" || b.type === "tool_call");
+  const droppedCount = blocks.length - emittable.length;
+  if (droppedCount > 0) {
+    console.warn(`[pi-mock] ${droppedCount} thinking block(s) dropped — Google format has no thinking wire format`);
+  }
+
+  for (let i = 0; i < emittable.length; i++) {
+    const b = emittable[i];
+    const isLast = i === emittable.length - 1;
+
     if (b.type === "text") {
       out.push(
         `data: ${JSON.stringify({
           candidates: [
             {
               content: { parts: [{ text: b.text }], role: "model" },
-              finishReason: "STOP",
+              ...(isLast ? { finishReason: "STOP" } : {}),
             },
           ],
           usageMetadata: {
@@ -222,7 +232,7 @@ export function googleToSSE(response: BrainResponse, _model: string): string {
                 ],
                 role: "model",
               },
-              finishReason: "STOP",
+              ...(isLast ? { finishReason: "STOP" } : {}),
             },
           ],
           usageMetadata: {
