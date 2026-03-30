@@ -68,6 +68,12 @@ export function openaiToSSE(response: BrainResponse, model: string): string {
   const created = Math.floor(Date.now() / 1000);
   const out: string[] = [];
 
+  // Warn about dropped thinking blocks — OpenAI Chat Completions has no thinking wire format
+  const thinkingCount = blocks.filter(b => b.type === "thinking").length;
+  if (thinkingCount > 0) {
+    console.warn(`[pi-mock] ${thinkingCount} thinking block(s) dropped — OpenAI Chat Completions has no thinking wire format`);
+  }
+
   // Role chunk
   out.push(
     `data: ${JSON.stringify({
@@ -306,6 +312,12 @@ export function openaiResponsesToSSE(response: BrainResponse, model: string): st
   const out: string[] = [];
   let seq = 0;
 
+  // Warn about dropped thinking blocks — OpenAI Responses API has no thinking wire format
+  const thinkingCount = blocks.filter(b => b.type === "thinking").length;
+  if (thinkingCount > 0) {
+    console.warn(`[pi-mock] ${thinkingCount} thinking block(s) dropped — OpenAI Responses API has no thinking wire format`);
+  }
+
   out.push(respSSE("response.created", {
     type: "response.created",
     response: { id: responseId, status: "in_progress", model, output: [], usage: null },
@@ -368,11 +380,13 @@ export function openaiResponsesToSSE(response: BrainResponse, model: string): st
       id: responseId,
       status: "completed",
       model,
-      output: blocks.map((b) => {
-        if (b.type === "text") return { type: "message", role: "assistant", content: [{ type: "output_text", text: b.text }] };
-        if (b.type === "tool_call") return { type: "function_call", name: b.name, arguments: JSON.stringify(b.input) };
-        return {};
-      }),
+      output: blocks
+        .filter((b) => b.type === "text" || b.type === "tool_call")
+        .map((b) => {
+          if (b.type === "text") return { type: "message", role: "assistant", content: [{ type: "output_text", text: b.text }] };
+          if (b.type === "tool_call") return { type: "function_call", name: b.name, arguments: JSON.stringify(b.input) };
+          return {};
+        }),
       usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
     },
     sequence_number: seq++,
