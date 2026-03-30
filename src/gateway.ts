@@ -161,6 +161,13 @@ export async function createGateway(config: GatewayConfig): Promise<Gateway> {
 
     const apiReq = parseRequest(provider, rawBody);
     apiReq._provider = provider;
+
+    // Google puts the model name in the URL path, not the body.
+    // Extract it so the brain and mock.requests[] see the real model name.
+    if (provider === "google" && apiReq.model === "gemini") {
+      const modelMatch = (req.url ?? "").match(/\/models\/([^:]+):/);
+      if (modelMatch) apiReq.model = modelMatch[1];
+    }
     apiReq._headers = Object.fromEntries(
       Object.entries(req.headers)
         .filter(([, v]) => typeof v === "string")
