@@ -24,7 +24,8 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdtempSync, chmod
 import { tmpdir } from "node:os";
 import { request } from "node:http";
 import { pathToFileURL } from "node:url";
-import { createMock, script, always, echo, type MockOptions } from "./mock.js";
+import { createMock, type MockOptions } from "./mock.js";
+import { script, always, echo } from "./brains.js";
 import { type Brain, type BrainResponse } from "./anthropic.js";
 import { type NetworkRule } from "./gateway.js";
 import { createRecorder, replay } from "./record.js";

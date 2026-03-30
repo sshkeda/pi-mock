@@ -38,15 +38,7 @@ import {
   type BrainResponse,
   text,
 } from "./anthropic.js";
-import {
-  script,
-  always,
-  echo,
-  createControllableBrain,
-  type PendingCall,
-  type CallFilter,
-  type ControllableBrain,
-} from "./brains.js";
+
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -696,6 +688,3 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-// Re-export brain helpers for backward compatibility
-export { script, always, echo, createControllableBrain };
-export type { PendingCall, CallFilter, ControllableBrain };
