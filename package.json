@@ -56,7 +56,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test --test-force-exit test/test-providers.mjs test/test-network.mjs test/test-replay.mjs test/test-cli.mjs test/test-e2e.mjs test/test-issues.mjs test/test-steer.mjs",
+    "test": "npm run build && node --test --test-force-exit test/test-providers.mjs test/test-network.mjs test/test-replay.mjs test/test-cli.mjs test/test-e2e.mjs test/test-issues.mjs test/test-steer.mjs test/test-helper.mjs",
     "test:unit": "npm run build && node --test --test-force-exit test/test-providers.mjs test/test-network.mjs test/test-replay.mjs test/test-cli.mjs",
     "test:e2e": "node test/test-e2e.mjs",
     "test:issues": "node test/test-issues.mjs",

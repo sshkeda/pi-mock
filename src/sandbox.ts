@@ -15,6 +15,23 @@ import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 
+// ─── Helper extension path ──────────────────────────────────────────
+
+/** Resolve path to the test-helper extension bundled with pi-mock. */
+function getHelperExtensionPath(): string {
+  // Works whether running from src/ (dev) or dist/ (published)
+  const candidates = [
+    resolve(dirname(fileURLToPath(import.meta.url)), "test-helper-extension.ts"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "test-helper-extension.ts"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  // Fallback: assume it's next to this file (dist/test-helper-extension.js won't work with jiti,
+  // but the .ts source is always shipped in the npm package)
+  return candidates[0];
+}
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 export interface SandboxConfig {
@@ -100,6 +117,10 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     "mock",
     ...(config.piArgs ?? []),
   ];
+
+  // Auto-load test helper extension FIRST (before user extensions)
+  // so its input handler runs before user extension handlers.
+  args.push("-e", getHelperExtensionPath());
 
   for (const ext of config.extensions ?? []) {
     args.push("-e", resolve(ext));
@@ -279,7 +300,11 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
   // Image
   dockerArgs.push(image);
 
-  // Pi command inside container
+  // Pi command inside container — helper extension loaded first
+  const helperExt = getHelperExtensionPath();
+  const helperContainerDir = `/ext/helper`;
+  dockerArgs.push("-v", `${dirname(helperExt)}:${helperContainerDir}:ro`);
+
   const piCmd = [
     "pi",
     "--mode",
@@ -293,6 +318,7 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
     "--model",
     "mock",
     ...(config.piArgs ?? []),
+    "-e", `${helperContainerDir}/${basename(helperExt)}`,
     ...extArgs,
   ];
   dockerArgs.push(...piCmd);

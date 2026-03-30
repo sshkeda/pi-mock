@@ -138,6 +138,38 @@ export interface Mock {
   readonly url: string;
   /** Management API auth token. Required as x-pi-mock-token header or ?token= param. */
   readonly token: string;
+
+  // ── Test helper methods ──
+
+  /**
+   * Enable/disable pi's auto-retry on transient API errors (429, 500, 529, etc.).
+   * When disabled, errors go straight to `agent_end` without retrying —
+   * useful for testing extension error-handling logic.
+   */
+  setAutoRetry(enabled: boolean): Promise<void>;
+
+  /**
+   * Emit an event on pi's extension event bus (`pi.events`).
+   * Extensions can listen for custom events to trigger time-dependent behavior
+   * without waiting for real time to pass.
+   *
+   * Example: `await mock.emitEvent("clock:advance", { ms: 300_000 })` —
+   * and the extension does `pi.events.on("clock:advance", ({ ms }) => { ... })`
+   */
+  emitEvent(type: string, data?: unknown): Promise<void>;
+
+  /**
+   * Invoke an extension command (e.g., `/my-command args`).
+   * Commands execute immediately without triggering an LLM turn.
+   */
+  invokeCommand(command: string, args?: string): Promise<void>;
+
+  /**
+   * Set which tools are active. Pass tool names to enable only those,
+   * or `"*"` to restore all tools.
+   */
+  setActiveTools(tools: string[] | "*"): Promise<void>;
+
   /** Shut everything down. */
   close(): Promise<void>;
 }
@@ -581,6 +613,31 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       });
     },
 
+    // ── Test helper methods ──
+
+    async setAutoRetry(enabled) {
+      const resp = await rpc.send({ type: "set_auto_retry", enabled });
+      if (!resp.success) throw new Error(`setAutoRetry failed: ${resp.error}`);
+    },
+
+    async emitEvent(type, data) {
+      const arg = data !== undefined ? `${type} ${JSON.stringify(data)}` : type;
+      const resp = await rpc.send({ type: "prompt", message: `/_mock_emit_event ${arg}` });
+      if (!resp.success) throw new Error(`emitEvent failed: ${resp.error}`);
+    },
+
+    async invokeCommand(command, args) {
+      const msg = args ? `/${command} ${args}` : `/${command}`;
+      const resp = await rpc.send({ type: "prompt", message: msg });
+      if (!resp.success) throw new Error(`invokeCommand(${command}) failed: ${resp.error}`);
+    },
+
+    async setActiveTools(tools) {
+      const arg = tools === "*" ? "*" : tools.join(",");
+      const resp = await rpc.send({ type: "prompt", message: `/_mock_set_tools ${arg}` });
+      if (!resp.success) throw new Error(`setActiveTools failed: ${resp.error}`);
+    },
+
     async close() {
       if (closed) return;
       closed = true;
@@ -639,6 +696,6 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-// Re-export brain helpers from brains.ts
+// Re-export brain helpers for backward compatibility
 export { script, always, echo, createControllableBrain };
 export type { PendingCall, CallFilter, ControllableBrain };
