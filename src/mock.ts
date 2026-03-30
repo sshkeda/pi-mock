@@ -78,6 +78,12 @@ export interface MockOptions {
   runTimeoutMs?: number;
   /** Handler for extension UI dialogs. Default: cancel all. */
   uiHandler?: UIHandler;
+  /**
+   * Gateway bind address. Default: "127.0.0.1" (local), "0.0.0.0" (sandbox).
+   * Override to bind to a specific interface (e.g. Docker bridge IP) instead
+   * of all interfaces in sandbox mode.
+   */
+  gatewayHost?: string;
   /** Docker image name. Default: auto-build "pi-mock-sandbox" */
   image?: string;
   /** Extra Docker volumes. */
@@ -347,7 +353,7 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     rules: options.network?.rules,
     default: options.network?.default ?? "block",
     port: options.port,
-    host: options.sandbox ? "0.0.0.0" : "127.0.0.1",
+    host: options.gatewayHost ?? (options.sandbox ? "0.0.0.0" : "127.0.0.1"),
     onManagement,
   });
 
