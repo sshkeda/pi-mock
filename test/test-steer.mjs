@@ -61,7 +61,7 @@ test("followUp() triggers new turn after agent finishes", async () => {
 
     await mock.waitFor(
       e => e.type === "agent_end" && mock.events.filter(ev => ev.type === "agent_end").length >= 2,
-      TIMEOUT,
+      2000,
     ).catch(() => null);
 
     assert.ok(callCount >= 2, `followUp should trigger second brain call, got ${callCount}`);

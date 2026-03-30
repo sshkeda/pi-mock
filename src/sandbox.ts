@@ -95,7 +95,17 @@ function createAgentDir(gatewayUrl: string): string {
   };
 
   writeFileSync(join(dir, "models.json"), JSON.stringify(modelsJson, null, 2));
-  writeFileSync(join(dir, "settings.json"), "{}");
+
+  // Fast retry defaults for testing — 100ms base delay instead of 2s.
+  // Tests that need real retry timing can override via setAutoRetry() or sendRpc().
+  const settingsJson = {
+    retry: {
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: 100,
+    },
+  };
+  writeFileSync(join(dir, "settings.json"), JSON.stringify(settingsJson, null, 2));
   return dir;
 }
 
