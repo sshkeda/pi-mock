@@ -4,30 +4,12 @@
  * Tests the gateway's rule engine, HTTP forward proxy, and HTTPS CONNECT tunnel
  * without needing Docker. Creates a real gateway and makes HTTP requests through it.
  */
+import { test } from "node:test";
+import assert from "node:assert/strict";
 import { createGateway } from "../dist/gateway.js";
 import { text } from "../dist/index.js";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:http";
-
-let passed = 0;
-let failed = 0;
-
-async function test(name, fn) {
-  process.stderr.write(`\n━━━ ${name} `);
-  try {
-    await fn();
-    passed++;
-    process.stderr.write(`✅ PASS\n`);
-  } catch (err) {
-    failed++;
-    process.stderr.write(`❌ FAIL: ${err.message}\n`);
-    if (err.stack) process.stderr.write(`    ${err.stack.split("\n").slice(1, 3).join("\n    ")}\n`);
-  }
-}
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(`Assertion failed: ${msg}`);
-}
 
 /** Make an HTTP request through the gateway as a forward proxy. */
 function proxyGet(gwPort, targetUrl) {
@@ -92,7 +74,7 @@ function startEchoServer() {
 // Rule matching — string match (exact + subdomain)
 // ═══════════════════════════════════════════════════════════════════
 
-await test("block by default — HTTP proxy returns 403", async () => {
+test("block by default — HTTP proxy returns 403", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
@@ -100,19 +82,17 @@ await test("block by default — HTTP proxy returns 403", async () => {
   });
   try {
     const res = await proxyGet(gw.port, "http://example.com/test");
-    assert(res.status === 403, `expected 403, got ${res.status}`);
-    assert(res.body.includes("blocked"), `body: ${res.body}`);
-
-    // Verify proxy log recorded it
-    assert(gw.proxyLog.length === 1, `proxyLog: ${gw.proxyLog.length}`);
-    assert(gw.proxyLog[0].action === "block", `action: ${gw.proxyLog[0].action}`);
-    assert(gw.proxyLog[0].host === "example.com", `host: ${gw.proxyLog[0].host}`);
+    assert.equal(res.status, 403);
+    assert.ok(res.body.includes("blocked"), `body: ${res.body}`);
+    assert.equal(gw.proxyLog.length, 1);
+    assert.equal(gw.proxyLog[0].action, "block");
+    assert.equal(gw.proxyLog[0].host, "example.com");
   } finally {
     await gw.close();
   }
 });
 
-await test("allow rule — exact host match", async () => {
+test("allow rule — exact host match", async () => {
   const echo = await startEchoServer();
   const gw = await createGateway({
     brain: () => text("unused"),
@@ -121,35 +101,32 @@ await test("allow rule — exact host match", async () => {
   });
   try {
     const res = await proxyGet(gw.port, `${echo.url}/hello`);
-    assert(res.status === 200, `expected 200, got ${res.status}`);
-    assert(res.body === "echo:/hello", `body: ${res.body}`);
-    assert(gw.proxyLog[0].action === "allow", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body, "echo:/hello");
+    assert.equal(gw.proxyLog[0].action, "allow");
   } finally {
     await gw.close();
     echo.close();
   }
 });
 
-await test("allow rule — subdomain match", async () => {
+test("allow rule — subdomain match", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
     rules: [{ match: "npmjs.org", action: "allow" }],
   });
   try {
-    // This won't actually resolve, but we can check the proxy log for the action
-    // We use a non-routable target — the action decision happens before forwarding
-    const res = await proxyGet(gw.port, "http://registry.npmjs.org/test").catch(() => null);
-    // The request may fail (DNS/connection), but the proxy log should show "allow"
-    assert(gw.proxyLog.length === 1, `proxyLog: ${gw.proxyLog.length}`);
-    assert(gw.proxyLog[0].action === "allow", `action: ${gw.proxyLog[0].action}`);
-    assert(gw.proxyLog[0].host === "registry.npmjs.org", `host: ${gw.proxyLog[0].host}`);
+    await proxyGet(gw.port, "http://registry.npmjs.org/test").catch(() => null);
+    assert.equal(gw.proxyLog.length, 1);
+    assert.equal(gw.proxyLog[0].action, "allow");
+    assert.equal(gw.proxyLog[0].host, "registry.npmjs.org");
   } finally {
     await gw.close();
   }
 });
 
-await test("block rule — explicit block overrides default allow", async () => {
+test("block rule — explicit block overrides default allow", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "allow",
@@ -157,8 +134,8 @@ await test("block rule — explicit block overrides default allow", async () => 
   });
   try {
     const res = await proxyGet(gw.port, "http://evil.com/malware");
-    assert(res.status === 403, `expected 403, got ${res.status}`);
-    assert(gw.proxyLog[0].action === "block", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(res.status, 403);
+    assert.equal(gw.proxyLog[0].action, "block");
   } finally {
     await gw.close();
   }
@@ -168,21 +145,19 @@ await test("block rule — explicit block overrides default allow", async () => 
 // Rule matching — regex
 // ═══════════════════════════════════════════════════════════════════
 
-await test("regex rule — matches host pattern", async () => {
+test("regex rule — matches host pattern", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
     rules: [{ match: /\.github\.com$/, action: "allow" }],
   });
   try {
-    // api.github.com should match
     await proxyGet(gw.port, "http://api.github.com/repos").catch(() => null);
-    assert(gw.proxyLog.length === 1, `proxyLog: ${gw.proxyLog.length}`);
-    assert(gw.proxyLog[0].action === "allow", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(gw.proxyLog.length, 1);
+    assert.equal(gw.proxyLog[0].action, "allow");
 
-    // github.com (no subdomain) should NOT match the regex
     await proxyGet(gw.port, "http://github.com/test").catch(() => null);
-    assert(gw.proxyLog[1].action === "block", `plain github.com: ${gw.proxyLog[1].action}`);
+    assert.equal(gw.proxyLog[1].action, "block");
   } finally {
     await gw.close();
   }
@@ -192,7 +167,7 @@ await test("regex rule — matches host pattern", async () => {
 // Rule matching — intercept (synthetic response)
 // ═══════════════════════════════════════════════════════════════════
 
-await test("intercept rule — static response", async () => {
+test("intercept rule — static response", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
@@ -206,17 +181,17 @@ await test("intercept rule — static response", async () => {
   });
   try {
     const res = await proxyGet(gw.port, "http://api.example.com/data");
-    assert(res.status === 200, `expected 200, got ${res.status}`);
+    assert.equal(res.status, 200);
     const parsed = JSON.parse(res.body);
-    assert(parsed.mocked === true, `body: ${res.body}`);
-    assert(res.headers["content-type"] === "application/json", `ct: ${res.headers["content-type"]}`);
-    assert(gw.proxyLog[0].action === "intercept", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(parsed.mocked, true);
+    assert.equal(res.headers["content-type"], "application/json");
+    assert.equal(gw.proxyLog[0].action, "intercept");
   } finally {
     await gw.close();
   }
 });
 
-await test("intercept rule — handler function", async () => {
+test("intercept rule — handler function", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
@@ -233,11 +208,11 @@ await test("intercept rule — handler function", async () => {
   });
   try {
     const res = await proxyGet(gw.port, "http://dynamic.example.com/api/v1/users");
-    assert(res.status === 201, `expected 201, got ${res.status}`);
+    assert.equal(res.status, 201);
     const parsed = JSON.parse(res.body);
-    assert(parsed.host === "dynamic.example.com", `host: ${parsed.host}`);
-    assert(parsed.method === "GET", `method: ${parsed.method}`);
-    assert(parsed.path === "/api/v1/users", `path: ${parsed.path}`);
+    assert.equal(parsed.host, "dynamic.example.com");
+    assert.equal(parsed.method, "GET");
+    assert.equal(parsed.path, "/api/v1/users");
   } finally {
     await gw.close();
   }
@@ -247,7 +222,7 @@ await test("intercept rule — handler function", async () => {
 // HTTPS CONNECT tunnel
 // ═══════════════════════════════════════════════════════════════════
 
-await test("CONNECT — blocked by default", async () => {
+test("CONNECT — blocked by default", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
@@ -255,28 +230,25 @@ await test("CONNECT — blocked by default", async () => {
   });
   try {
     const res = await proxyConnect(gw.port, "evil.com");
-    assert(res.status === 403, `expected 403, got ${res.status}`);
-    assert(gw.proxyLog.length === 1, `proxyLog: ${gw.proxyLog.length}`);
-    assert(gw.proxyLog[0].action === "block", `action: ${gw.proxyLog[0].action}`);
-    assert(gw.proxyLog[0].method === "CONNECT", `method: ${gw.proxyLog[0].method}`);
+    assert.equal(res.status, 403);
+    assert.equal(gw.proxyLog.length, 1);
+    assert.equal(gw.proxyLog[0].action, "block");
+    assert.equal(gw.proxyLog[0].method, "CONNECT");
   } finally {
     await gw.close();
   }
 });
 
-await test("CONNECT — allowed by rule", async () => {
+test("CONNECT — allowed by rule", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
     rules: [{ match: "github.com", action: "allow" }],
   });
   try {
-    // We can't complete a real TLS handshake, but we can verify the CONNECT
-    // gets a 200 response (connection established). The tunnel will fail after
-    // since there's no real TLS server, but the rule matched "allow".
     const res = await proxyConnect(gw.port, "github.com");
-    assert(res.status === 200, `expected 200, got ${res.status}`);
-    assert(gw.proxyLog[0].action === "allow", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(res.status, 200);
+    assert.equal(gw.proxyLog[0].action, "allow");
   } finally {
     await gw.close();
   }
@@ -286,24 +258,21 @@ await test("CONNECT — allowed by rule", async () => {
 // setRules — dynamic rule updates
 // ═══════════════════════════════════════════════════════════════════
 
-await test("setRules — dynamically change rules", async () => {
+test("setRules — dynamically change rules", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "block",
     rules: [],
   });
   try {
-    // Initially blocked
     const res1 = await proxyGet(gw.port, "http://example.com/a");
-    assert(res1.status === 403, `initially blocked: ${res1.status}`);
+    assert.equal(res1.status, 403);
 
-    // Update rules to allow
     gw.setRules([{ match: "example.com", action: "allow" }]);
 
-    // Now allowed (will fail on DNS but action should be "allow")
     await proxyGet(gw.port, "http://example.com/b").catch(() => null);
     const lastLog = gw.proxyLog[gw.proxyLog.length - 1];
-    assert(lastLog.action === "allow", `after setRules: ${lastLog.action}`);
+    assert.equal(lastLog.action, "allow");
   } finally {
     await gw.close();
   }
@@ -313,7 +282,7 @@ await test("setRules — dynamically change rules", async () => {
 // Rule priority — first match wins
 // ═══════════════════════════════════════════════════════════════════
 
-await test("rule priority — first match wins", async () => {
+test("rule priority — first match wins", async () => {
   const gw = await createGateway({
     brain: () => text("unused"),
     default: "allow",
@@ -323,14 +292,12 @@ await test("rule priority — first match wins", async () => {
     ],
   });
   try {
-    // api.example.com matches first rule → block
     const res = await proxyGet(gw.port, "http://api.example.com/test");
-    assert(res.status === 403, `api.example.com blocked: ${res.status}`);
+    assert.equal(res.status, 403);
 
-    // www.example.com matches second rule (subdomain of example.com) → allow
     await proxyGet(gw.port, "http://www.example.com/test").catch(() => null);
     const lastLog = gw.proxyLog[gw.proxyLog.length - 1];
-    assert(lastLog.action === "allow", `www.example.com allowed: ${lastLog.action}`);
+    assert.equal(lastLog.action, "allow");
   } finally {
     await gw.close();
   }
@@ -340,7 +307,7 @@ await test("rule priority — first match wins", async () => {
 // onRequest listener
 // ═══════════════════════════════════════════════════════════════════
 
-await test("onRequest — notifies on LLM requests, unsubscribe works", async () => {
+test("onRequest — notifies on LLM requests, unsubscribe works", async () => {
   const received = [];
   const gw = await createGateway({
     brain: () => text("hello"),
@@ -351,7 +318,6 @@ await test("onRequest — notifies on LLM requests, unsubscribe works", async ()
       received.push({ model: req.model, index });
     });
 
-    // Make an LLM request (POST to /v1/messages)
     await new Promise((resolve, reject) => {
       const req = httpRequest(
         {
@@ -372,10 +338,9 @@ await test("onRequest — notifies on LLM requests, unsubscribe works", async ()
       req.end();
     });
 
-    assert(received.length === 1, `received: ${received.length}`);
-    assert(received[0].index === 0, `index: ${received[0].index}`);
+    assert.equal(received.length, 1);
+    assert.equal(received[0].index, 0);
 
-    // Unsubscribe and verify no more notifications
     unsub();
 
     await new Promise((resolve, reject) => {
@@ -398,8 +363,8 @@ await test("onRequest — notifies on LLM requests, unsubscribe works", async ()
       req.end();
     });
 
-    assert(received.length === 1, `after unsub: ${received.length} (should still be 1)`);
-    assert(gw.requests.length === 2, `total requests: ${gw.requests.length}`);
+    assert.equal(received.length, 1, "after unsub should still be 1");
+    assert.equal(gw.requests.length, 2);
   } finally {
     await gw.close();
   }
@@ -409,7 +374,7 @@ await test("onRequest — notifies on LLM requests, unsubscribe works", async ()
 // Default "allow" mode
 // ═══════════════════════════════════════════════════════════════════
 
-await test("default allow — no rules, traffic flows", async () => {
+test("default allow — no rules, traffic flows", async () => {
   const echo = await startEchoServer();
   const gw = await createGateway({
     brain: () => text("unused"),
@@ -418,20 +383,11 @@ await test("default allow — no rules, traffic flows", async () => {
   });
   try {
     const res = await proxyGet(gw.port, `${echo.url}/path`);
-    assert(res.status === 200, `expected 200, got ${res.status}`);
-    assert(res.body === "echo:/path", `body: ${res.body}`);
-    assert(gw.proxyLog[0].action === "allow", `action: ${gw.proxyLog[0].action}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body, "echo:/path");
+    assert.equal(gw.proxyLog[0].action, "allow");
   } finally {
     await gw.close();
     echo.close();
   }
 });
-
-// ═══════════════════════════════════════════════════════════════════
-// Summary
-// ═══════════════════════════════════════════════════════════════════
-console.error(`\n${"═".repeat(60)}`);
-console.error(`Network tests: ${passed} passed, ${failed} failed, ${passed + failed} total`);
-console.error(`${"═".repeat(60)}\n`);
-
-process.exit(failed > 0 ? 1 : 0);
