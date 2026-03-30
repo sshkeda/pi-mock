@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 (2026-03-29)
+
+### Bug Fixes
+
+- **Google SSE** — Only set `finishReason: "STOP"` on the last chunk, matching real API behavior. Previously every chunk said STOP, causing consumers to stop after the first block in multi-block responses.
+- **Thinking blocks** — Non-Anthropic serializers (OpenAI, Google) now warn via `console.warn` when thinking blocks are dropped instead of silently discarding them. Also fixes ghost `{}` objects in `openaiResponsesToSSE` `response.completed` output.
+- **Gateway cleanup** — `cleanup()` now closes the gateway HTTP server on SIGINT/SIGTERM, preventing server handle leaks that blocked process exit.
+- **Google request parsing** — `parseGoogleRequest` now handles `functionCall` and `functionResponse` parts. Previously only text parts were extracted, so the brain couldn't see tool interactions.
+- **OpenAI Responses parsing** — `parseOpenAIResponsesRequest` now preserves structured `function_call`/`function_call_output` items with correct `role: "tool"` instead of converting to lossy text strings.
+- **Google model name** — Extract model from URL path (`/models/gemini-2.0-flash:...`) instead of always falling back to `"gemini"`.
+
 ## 1.0.0 (2026-03-29)
 
 Initial public release.
