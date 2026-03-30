@@ -401,6 +401,8 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     } catch {
       /* already dead */
     }
+    // Close gateway to prevent server handle leak on SIGINT/SIGTERM
+    gw.close().catch(() => {});
   }
 
   process.on("exit", cleanup);
