@@ -53,6 +53,12 @@ export {
   type ProviderName,
 } from "./providers.js";
 export {
+  createInteractiveMock,
+  type InteractiveMock,
+  type InteractiveMockOptions,
+  type KeyName,
+} from "./interactive.js";
+export {
   flakyBrain,
   errorAfter,
   failFirst,
