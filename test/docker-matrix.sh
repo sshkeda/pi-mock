@@ -11,7 +11,11 @@
 
 set -euo pipefail
 
-VERSIONS=("${@:-20 22 24}")
+if [ $# -eq 0 ]; then
+  VERSIONS=(20 22 24)
+else
+  VERSIONS=("$@")
+fi
 PI_VERSION="${PI_VERSION:-0.64}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
