@@ -19,7 +19,7 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync, accessSync, chmodSync, constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { IPty } from "node-pty";
@@ -264,14 +264,16 @@ function readBody(req: IncomingMessage): Promise<string> {
  */
 function fixSpawnHelperPermissions(): void {
   try {
-    const ptyDir = dirname(require.resolve("node-pty/package.json"));
+    // Resolve node-pty's install dir via import.meta.resolve (ESM-compatible).
+    // import.meta.resolve returns a file:// URL string.
+    const ptyPkgUrl = import.meta.resolve("node-pty/package.json");
+    const ptyDir = dirname(fileURLToPath(ptyPkgUrl));
     const helper = join(
       ptyDir,
       "prebuilds",
       `${process.platform}-${process.arch}`,
       "spawn-helper",
     );
-    const { accessSync, chmodSync, constants } = require("node:fs") as typeof import("node:fs");
     try {
       accessSync(helper, constants.X_OK);
     } catch {
