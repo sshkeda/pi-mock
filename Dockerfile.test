@@ -1,0 +1,28 @@
+ARG NODE_VERSION=22
+FROM node:${NODE_VERSION}-slim
+
+# Build tools for node-pty native compilation + ps for getProcessStats
+RUN apt-get update && \
+    apt-get install -y python3 make g++ procps && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pi globally
+ARG PI_VERSION=0.64
+RUN npm install -g @mariozechner/pi-coding-agent@${PI_VERSION}
+RUN pi --version || true
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+CMD ["node", "--test", "--test-force-exit", \
+     "test/test-providers.mjs", \
+     "test/test-network.mjs", \
+     "test/test-replay.mjs", \
+     "test/test-cli.mjs", \
+     "test/test-e2e.mjs", \
+     "test/test-steer.mjs", \
+     "test/test-helper.mjs", \
+     "test/test-interactive.mjs"]
