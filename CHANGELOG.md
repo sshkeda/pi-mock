@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 (2026-03-31)
+
+### Features
+
+- **Interactive mode testing** — New `createInteractiveMock()` spawns pi in its default terminal UI mode via a pseudo-terminal (node-pty). Drive pi's interactive TUI programmatically with `type()`, `submit()`, `sendKey()`, and `waitForOutput()`.
+- **Management HTTP API for interactive mode** — 12 endpoints (`/_/submit`, `/_/output`, `/_/send-key`, `/_/wait-for-output`, `/_/resize`, `/_/status`, etc.) for driving interactive sessions over HTTP, matching the regular mock's `/_/` pattern.
+- **Process stats** — New `getProcessStats()` on both `Mock` and `InteractiveMock` for snapshotting pi's RSS memory and CPU usage via `ps`.
+- **Docker test matrix** — `Dockerfile.test` and `test/docker-matrix.sh` for running the full test suite across Node 20/22/24.
+
+### Bug Fixes
+
+- **ANSI stripping** — Terminal output stripping now handles OSC sequences (`\x1b]...\x07`), extended CSI variants, and control characters. Previously only basic CSI sequences were stripped, leaving artifacts from pi's TUI hyperlinks and mode-setting escapes.
+- **node-pty spawn-helper permissions** — Auto-detects and fixes the missing execute bit on node-pty's prebuild `spawn-helper` binary, which ships without +x in the npm tarball and causes `posix_spawnp failed` errors on first use.
+
+### Other
+
+- `node-pty` added as optional peer dependency (only needed for interactive mode).
+
 ## 1.0.1 (2026-03-29)
 
 ### Bug Fixes

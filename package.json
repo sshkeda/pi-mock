@@ -1,6 +1,6 @@
 {
   "name": "pi-mock",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Integration testing harness for pi extensions. Mock LLM APIs (Anthropic, OpenAI, Google), Docker sandbox, fault injection, record/replay.",
   "keywords": [
     "pi",
