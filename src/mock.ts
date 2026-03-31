@@ -13,6 +13,7 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
+import { readProcessStats, type ProcessStats } from "./process-stats.js";
 import {
   createGateway,
   type NetworkRule,
@@ -41,6 +42,8 @@ import {
 
 
 // ─── Types ───────────────────────────────────────────────────────────
+
+export type { ProcessStats } from "./process-stats.js";
 
 export interface MockOptions {
   /** Brain function — you are the model. */
@@ -161,6 +164,13 @@ export interface Mock {
    * or `"*"` to restore all tools.
    */
   setActiveTools(tools: string[] | "*"): Promise<void>;
+
+  /**
+   * Snapshot the pi process's resource usage (RSS memory, CPU time).
+   * Uses `ps` to read stats — works on macOS and Linux.
+   * Returns null if the process has already exited.
+   */
+  getProcessStats(): ProcessStats | null;
 
   /** Shut everything down. */
   close(): Promise<void>;
@@ -628,6 +638,11 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       const arg = tools === "*" ? "*" : tools.join(",");
       const resp = await rpc.send({ type: "prompt", message: `/_mock_set_tools ${arg}` });
       if (!resp.success) throw new Error(`setActiveTools failed: ${resp.error}`);
+    },
+
+    getProcessStats() {
+      if (proc.exitCode !== null || !proc.pid) return null;
+      return readProcessStats(proc.pid);
     },
 
     async close() {

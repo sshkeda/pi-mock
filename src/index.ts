@@ -1,7 +1,7 @@
 // Public API
 export {
   createMock,
-  type Mock, type MockOptions,
+  type Mock, type MockOptions, type ProcessStats,
 } from "./mock.js";
 export {
   script, always, echo,
