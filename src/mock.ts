@@ -90,6 +90,8 @@ export interface Mock {
   run(message: string, timeoutMs?: number): Promise<RpcEvent[]>;
   /** Send a prompt (fire-and-forget). */
   prompt(message: string): Promise<void>;
+  /** Send a prompt and return the rejection text instead of throwing. */
+  promptExpectReject(message: string, timeoutMs?: number): Promise<string>;
   /** Wait for current agent cycle to finish. Returns events since last prompt. */
   drain(timeoutMs?: number): Promise<RpcEvent[]>;
   /** Wait for an event matching a predicate. */
@@ -496,6 +498,14 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       if (!resp.success) {
         throw new Error(`Prompt rejected: ${resp.error ?? "unknown"}`);
       }
+    },
+
+    async promptExpectReject(message, timeoutMs = 30_000) {
+      const resp = await rpc.send({ type: "prompt", message }, timeoutMs);
+      if (resp.success) {
+        throw new Error(`Expected prompt rejection, but prompt was accepted: ${message}`);
+      }
+      return resp.error ?? "unknown";
     },
 
     async steer(message) {

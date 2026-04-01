@@ -5,8 +5,11 @@ export {
 } from "./mock.js";
 export {
   script, always, echo,
+  estimateRequestTokens,
+  withContextWindowLimit,
   createControllableBrain,
   type ControllableBrain, type PendingCall, type CallFilter,
+  type ContextWindowOptions,
 } from "./brains.js";
 export {
   text,

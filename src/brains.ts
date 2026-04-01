@@ -11,6 +11,7 @@ import {
   type ApiRequest,
   type BrainResponse,
   text,
+  httpError,
 } from "./anthropic.js";
 
 // ─── Brain helpers ───────────────────────────────────────────────────
@@ -35,6 +36,54 @@ export function echo(): Brain {
         ? lastMsg.content
         : JSON.stringify(lastMsg?.content ?? "no message");
     return text(`Echo: ${content}`);
+  };
+}
+
+// ─── Request sizing + context-window helpers ───────────────────────
+
+/** Very rough token estimate for mock-side context-window tests. */
+export function estimateRequestTokens(request: ApiRequest): number {
+  const system = Array.isArray(request.system)
+    ? request.system.map((s) => typeof s?.text === "string" ? s.text : "").join("\n")
+    : (request.system ?? "");
+
+  const messages = (request.messages ?? []).map((m) => {
+    if (typeof m.content === "string") return m.content;
+    return JSON.stringify(m.content ?? "");
+  }).join("\n");
+
+  const tools = JSON.stringify(request.tools ?? []);
+  const headers = JSON.stringify(request._headers ?? {});
+  const raw = typeof request._raw === "string" ? request._raw : JSON.stringify(request._raw ?? "");
+  const chars = `${system}\n${messages}\n${tools}\n${headers}\n${raw}`.length;
+  return Math.ceil(chars / 4);
+}
+
+export interface ContextWindowOptions {
+  /** Approximate max input tokens allowed before the mock rejects the request. */
+  maxInputTokens: number;
+  /** HTTP status for the synthetic provider rejection. Default: 400. */
+  status?: number;
+  /** Custom error message or formatter. */
+  message?: string | ((args: { actualTokens: number; maxInputTokens: number; request: ApiRequest }) => string);
+}
+
+/**
+ * Wrap a brain with a synthetic context-window limit.
+ * Useful for reproducing provider failures like context_length_exceeded
+ * at realistic prompt sizes without needing a frontier-sized real model.
+ */
+export function withContextWindowLimit(inner: Brain, options: ContextWindowOptions): Brain {
+  const { maxInputTokens, status = 400 } = options;
+  return async (request, index) => {
+    const actualTokens = estimateRequestTokens(request);
+    if (actualTokens > maxInputTokens) {
+      const message = typeof options.message === "function"
+        ? options.message({ actualTokens, maxInputTokens, request })
+        : (options.message ?? `context_length_exceeded: ${actualTokens} > ${maxInputTokens}`);
+      return httpError(status, message);
+    }
+    return inner(request, index);
   };
 }
 

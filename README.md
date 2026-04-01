@@ -394,6 +394,54 @@ const state = await mock.sendRpc({ type: "get_state" });
 console.log(state.data.model); // { provider: "pi-mock", id: "mock" }
 ```
 
+## Edge-Error Simulation
+
+`pi-mock` now includes helpers for two failure modes that show up in real agent systems:
+- **provider context-window rejection** at realistic prompt sizes
+- **RPC prompt rejection while the agent is already processing**
+
+### Synthetic context-window limits
+
+Use `withContextWindowLimit()` to wrap any brain and make it fail once a request gets too large:
+
+```typescript
+import { createMock, echo, withContextWindowLimit } from "pi-mock";
+
+const mock = await createMock({
+  brain: withContextWindowLimit(echo(), {
+    maxInputTokens: 1200,
+    message: ({ actualTokens, maxInputTokens }) =>
+      `Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"Your input exceeds the context window of this model. ${actualTokens} > ${maxInputTokens}","param":"input"},"sequence_number":2}`,
+  }),
+});
+```
+
+This is intentionally approximate. `pi-mock` estimates input tokens from request size so tests can reproduce prompt-growth failures without a real frontier-sized provider.
+
+If you just want the estimate, use `estimateRequestTokens(request)` directly.
+
+### Assert prompt rejection while busy
+
+Use `promptExpectReject()` when you want to verify that a second prompt is rejected because the agent is still processing the first one:
+
+```typescript
+import { createMock, createControllableBrain, text } from "pi-mock";
+
+const cb = createControllableBrain();
+const mock = await createMock({ brain: cb.brain });
+
+await mock.prompt("first");
+const call = await cb.waitForCall();
+
+const err = await mock.promptExpectReject("second while first is still running");
+console.log(err); // e.g. "Agent is already processing..."
+
+call.respond(text("done"));
+await mock.drain();
+```
+
+This is useful for reproducing manager/controller bugs where a follow-up prompt or intervention races with an in-flight turn.
+
 ## Network Isolation (Docker Sandbox)
 
 With `--sandbox`, pi runs in a Docker container with `--cap-add=NET_ADMIN`:
