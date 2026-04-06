@@ -37,13 +37,45 @@ export interface ExtensionUIRequest extends RpcEvent {
 /** Handler for extension UI dialogs. Return the response payload. */
 export type UIHandler = (req: ExtensionUIRequest) => Record<string, unknown> | undefined;
 
+/** Captured notification from ctx.ui.notify(). */
+export interface CapturedNotification {
+  message: string;
+  notifyType: "info" | "warning" | "error";
+  timestamp: number;
+}
+
+/** Captured status update from ctx.ui.setStatus(). */
+export interface CapturedStatusUpdate {
+  key: string;
+  text: string | undefined;
+  timestamp: number;
+}
+
+/** Captured widget update from ctx.ui.setWidget(). */
+export interface CapturedWidget {
+  key: string;
+  lines: string[] | undefined;
+  placement?: "aboveEditor" | "belowEditor";
+  timestamp: number;
+}
+
 export interface RpcClient {
   /** All events received so far. */
   readonly events: RpcEvent[];
+  /** All notifications captured from ctx.ui.notify(). */
+  readonly notifications: CapturedNotification[];
+  /** All status updates captured from ctx.ui.setStatus(). */
+  readonly statusUpdates: CapturedStatusUpdate[];
+  /** All widget updates captured from ctx.ui.setWidget(). */
+  readonly widgets: CapturedWidget[];
   /** Send a raw RPC command and wait for its response. */
   send(cmd: Record<string, unknown>, timeoutMs?: number): Promise<RpcResponse>;
   /** Wait for an event matching a predicate. Scans existing events from scanFrom first. */
   waitFor(pred: (e: RpcEvent) => boolean, timeoutMs?: number, scanFrom?: number): Promise<RpcEvent>;
+  /** Wait for a notification matching a predicate. */
+  waitForNotification(pred?: (n: CapturedNotification) => boolean, timeoutMs?: number): Promise<CapturedNotification>;
+  /** Wait for a status update matching a predicate. */
+  waitForStatusUpdate(pred?: (s: CapturedStatusUpdate) => boolean, timeoutMs?: number): Promise<CapturedStatusUpdate>;
   /** Subscribe to every event. Returns unsubscribe function. */
   on(listener: (e: RpcEvent) => void): () => void;
   /** Set handler for extension UI requests. */
@@ -56,6 +88,11 @@ export interface RpcClient {
 
 export function createRpcClient(proc: ChildProcess): RpcClient {
   const events: RpcEvent[] = [];
+  const notifications: CapturedNotification[] = [];
+  const statusUpdates: CapturedStatusUpdate[] = [];
+  const widgets: CapturedWidget[] = [];
+  const notificationListeners = new Set<(n: CapturedNotification) => void>();
+  const statusListeners = new Set<(s: CapturedStatusUpdate) => void>();
   const listeners = new Set<(e: RpcEvent) => void>();
   let uiHandler: UIHandler | undefined;
 
@@ -105,7 +142,42 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
       if (ev.type === "extension_ui_request") {
         const uiReq = ev as ExtensionUIRequest;
         const dialogMethods = new Set(["select", "confirm", "input", "editor"]);
-        if (dialogMethods.has(uiReq.method)) {
+
+        if (uiReq.method === "notify") {
+          // Capture notification
+          const n: CapturedNotification = {
+            message: (uiReq as any).message ?? "",
+            notifyType: (uiReq as any).notifyType ?? "info",
+            timestamp: Date.now(),
+          };
+          notifications.push(n);
+          for (const l of notificationListeners) l(n);
+          // Acknowledge (pi doesn't block on this, but send response for completeness)
+          write({ type: "extension_ui_response", id: uiReq.id, cancelled: true });
+        } else if (uiReq.method === "setStatus") {
+          // Capture status update
+          const s: CapturedStatusUpdate = {
+            key: (uiReq as any).statusKey ?? "",
+            text: (uiReq as any).statusText,
+            timestamp: Date.now(),
+          };
+          statusUpdates.push(s);
+          for (const l of statusListeners) l(s);
+          write({ type: "extension_ui_response", id: uiReq.id, cancelled: true });
+        } else if (uiReq.method === "setWidget") {
+          // Capture widget update
+          const w: CapturedWidget = {
+            key: (uiReq as any).widgetKey ?? "",
+            lines: (uiReq as any).widgetLines,
+            placement: (uiReq as any).widgetPlacement,
+            timestamp: Date.now(),
+          };
+          widgets.push(w);
+          write({ type: "extension_ui_response", id: uiReq.id, cancelled: true });
+        } else if (uiReq.method === "setTitle" || uiReq.method === "set_editor_text") {
+          // Acknowledge informational UI requests
+          write({ type: "extension_ui_response", id: uiReq.id, cancelled: true });
+        } else if (dialogMethods.has(uiReq.method)) {
           let payload: Record<string, unknown> | undefined;
           if (uiHandler) {
             payload = uiHandler(uiReq);
@@ -144,6 +216,9 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
 
   const client: RpcClient = {
     events,
+    notifications,
+    statusUpdates,
+    widgets,
 
     write,
 
@@ -192,6 +267,52 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
     on(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+
+    waitForNotification(pred, timeoutMs = 30_000) {
+      return new Promise<CapturedNotification>((resolve, reject) => {
+        // Scan existing
+        for (const n of notifications) {
+          if (!pred || pred(n)) return resolve(n);
+        }
+
+        const timer = setTimeout(() => {
+          notificationListeners.delete(check);
+          reject(new Error(`waitForNotification timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        function check(n: CapturedNotification) {
+          if (!pred || pred(n)) {
+            clearTimeout(timer);
+            notificationListeners.delete(check);
+            resolve(n);
+          }
+        }
+        notificationListeners.add(check);
+      });
+    },
+
+    waitForStatusUpdate(pred, timeoutMs = 30_000) {
+      return new Promise<CapturedStatusUpdate>((resolve, reject) => {
+        // Scan existing
+        for (const s of statusUpdates) {
+          if (!pred || pred(s)) return resolve(s);
+        }
+
+        const timer = setTimeout(() => {
+          statusListeners.delete(check);
+          reject(new Error(`waitForStatusUpdate timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        function check(s: CapturedStatusUpdate) {
+          if (!pred || pred(s)) {
+            clearTimeout(timer);
+            statusListeners.delete(check);
+            resolve(s);
+          }
+        }
+        statusListeners.add(check);
+      });
     },
   };
 

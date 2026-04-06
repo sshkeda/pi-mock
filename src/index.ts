@@ -2,6 +2,8 @@
 export {
   createMock,
   type Mock, type MockOptions, type ProcessStats,
+  type SlashCommandInfo, type CompletionItem,
+  type CapturedNotification, type CapturedStatusUpdate, type CapturedWidget,
 } from "./mock.js";
 export {
   script, always, echo,
@@ -46,7 +48,13 @@ export {
   type InterceptHandler,
   type ProxyLogEntry,
 } from "./gateway.js";
-export { createRpcClient, type RpcClient, type RpcEvent, type RpcResponse, type UIHandler } from "./rpc.js";
+export {
+  createRpcClient,
+  type RpcClient, type RpcEvent, type RpcResponse, type UIHandler,
+  type CapturedNotification as RpcCapturedNotification,
+  type CapturedStatusUpdate as RpcCapturedStatusUpdate,
+  type CapturedWidget as RpcCapturedWidget,
+} from "./rpc.js";
 export { spawnLocal, spawnSandbox, hasDocker } from "./sandbox.js";
 export {
   detectProvider,

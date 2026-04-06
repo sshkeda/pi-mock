@@ -27,6 +27,9 @@ import {
   type RpcEvent,
   type RpcResponse,
   type UIHandler,
+  type CapturedNotification,
+  type CapturedStatusUpdate,
+  type CapturedWidget,
 } from "./rpc.js";
 import {
   spawnLocal,
@@ -44,6 +47,20 @@ import {
 // ─── Types ───────────────────────────────────────────────────────────
 
 export type { ProcessStats } from "./process-stats.js";
+export type { CapturedNotification, CapturedStatusUpdate, CapturedWidget } from "./rpc.js";
+
+/** Slash command info returned by getCommands(). */
+export interface SlashCommandInfo {
+  name: string;
+  description?: string;
+  source: "extension" | "prompt" | "skill";
+}
+
+/** Completion item returned by getCompletions(). */
+export interface CompletionItem {
+  label: string;
+  description?: string;
+}
 
 export interface MockOptions {
   /** Brain function — you are the model. */
@@ -127,6 +144,12 @@ export interface Mock {
   waitForRequest(pred?: (req: ApiRequest, index: number) => boolean, timeoutMs?: number): Promise<{ request: ApiRequest; index: number }>;
   /** All RPC events from pi. */
   readonly events: RpcEvent[];
+  /** All captured notifications from ctx.ui.notify(). */
+  readonly notifications: CapturedNotification[];
+  /** All captured status updates from ctx.ui.setStatus(). */
+  readonly statusUpdates: CapturedStatusUpdate[];
+  /** All captured widget updates from ctx.ui.setWidget(). */
+  readonly widgets: CapturedWidget[];
   /** Pi's stderr output lines. */
   readonly stderr: string[];
   /** Gateway port. */
@@ -158,8 +181,34 @@ export interface Mock {
   /**
    * Invoke an extension command (e.g., `/my-command args`).
    * Commands execute immediately without triggering an LLM turn.
+   * Returns the command result including any notifications or status updates
+   * that occurred during execution.
    */
-  invokeCommand(command: string, args?: string): Promise<void>;
+  invokeCommand(command: string, args?: string): Promise<{ notifications: CapturedNotification[]; statusUpdates: CapturedStatusUpdate[] }>;
+
+  /**
+   * Wait for a notification matching a predicate.
+   * Scans existing notifications first, then subscribes to new ones.
+   */
+  waitForNotification(pred?: (n: CapturedNotification) => boolean, timeoutMs?: number): Promise<CapturedNotification>;
+
+  /**
+   * Wait for a status update matching a predicate.
+   * Scans existing status updates first, then subscribes to new ones.
+   */
+  waitForStatusUpdate(pred?: (s: CapturedStatusUpdate) => boolean, timeoutMs?: number): Promise<CapturedStatusUpdate>;
+
+  /**
+   * Get all registered slash commands.
+   * Uses pi's `get_commands` RPC command.
+   */
+  getCommands(): Promise<SlashCommandInfo[]>;
+
+  /**
+   * Get argument completions for a command.
+   * Uses the test helper extension to invoke getArgumentCompletions on the target command.
+   */
+  getCompletions(command: string, prefix?: string): Promise<CompletionItem[]>;
 
   /**
    * Set which tools are active. Pass tool names to enable only those,
@@ -474,6 +523,15 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     get events() {
       return rpc.events;
     },
+    get notifications() {
+      return rpc.notifications;
+    },
+    get statusUpdates() {
+      return rpc.statusUpdates;
+    },
+    get widgets() {
+      return rpc.widgets;
+    },
     stderr,
     get port() {
       return gw.port;
@@ -639,9 +697,50 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     },
 
     async invokeCommand(command, args) {
+      const notifyBefore = rpc.notifications.length;
+      const statusBefore = rpc.statusUpdates.length;
       const msg = args ? `/${command} ${args}` : `/${command}`;
       const resp = await rpc.send({ type: "prompt", message: msg });
       if (!resp.success) throw new Error(`invokeCommand(${command}) failed: ${resp.error}`);
+      // Give async notifications/status updates a moment to arrive
+      await new Promise((r) => setTimeout(r, 50));
+      return {
+        notifications: rpc.notifications.slice(notifyBefore),
+        statusUpdates: rpc.statusUpdates.slice(statusBefore),
+      };
+    },
+
+    waitForNotification(pred, timeoutMs) {
+      return rpc.waitForNotification(pred, timeoutMs);
+    },
+
+    waitForStatusUpdate(pred, timeoutMs) {
+      return rpc.waitForStatusUpdate(pred, timeoutMs);
+    },
+
+    async getCommands() {
+      const resp = await rpc.send({ type: "get_commands" });
+      if (!resp.success) throw new Error(`getCommands failed: ${(resp as any).error}`);
+      const data = (resp as any).data as { commands: SlashCommandInfo[] };
+      return data.commands;
+    },
+
+    async getCompletions(command, prefix = "") {
+      const notifyBefore = rpc.notifications.length;
+      const resp = await rpc.send(
+        { type: "prompt", message: `/_mock_get_completions ${command} ${prefix}` },
+      );
+      if (!resp.success) throw new Error(`getCompletions failed: ${(resp as any).error}`);
+      // Wait for the completions notification from the helper extension
+      try {
+        const n = await rpc.waitForNotification(
+          (n) => n.message.startsWith("_mock_completions:") && rpc.notifications.indexOf(n) >= notifyBefore,
+          5_000,
+        );
+        return JSON.parse(n.message.slice("_mock_completions:".length));
+      } catch {
+        return [];
+      }
     },
 
     async setActiveTools(tools) {

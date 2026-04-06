@@ -187,15 +187,82 @@ const { request, index } = await mock.waitForRequest((req, i) => i === 0);
 // Test helper methods
 await mock.setAutoRetry(false);                 // disable pi's auto-retry on transient errors
 await mock.emitEvent("clock:advance", { ms: 300_000 }); // emit on pi's extension event bus
-await mock.invokeCommand("my-command", "args"); // invoke an extension command (no LLM turn)
+await mock.invokeCommand("my-command", "args"); // invoke slash command (returns captured side effects)
 await mock.setActiveTools(["bash", "read"]);    // restrict active tools
 await mock.setActiveTools("*");                 // restore all tools
+
+// Slash command testing — capture output, notifications, status updates
+const result = await mock.invokeCommand("manager", "list");
+console.log(result.notifications);  // [{message, notifyType, timestamp}]
+console.log(result.statusUpdates);  // [{key, text, timestamp}]
+
+// Notification & status streams — test polling loops, status bar updates
+const notif = await mock.waitForNotification(n => n.message.includes("cycle"));
+const status = await mock.waitForStatusUpdate(s => s.key === "manager");
+console.log(mock.notifications);    // all captured notifications
+console.log(mock.statusUpdates);    // all captured status updates
+console.log(mock.widgets);          // all captured widget updates
+
+// Slash command discovery & argument completions
+const commands = await mock.getCommands();       // list all registered slash commands
+const completions = await mock.getCompletions("my-cmd", "att"); // argument completions (see note below)
 
 // Raw RPC escape hatch — any command pi supports
 const state = await mock.sendRpc({ type: "get_state" });
 const stats = await mock.sendRpc({ type: "get_session_stats" });
 
 await mock.close();
+```
+
+## Testing Slash Commands & UI Side Effects
+
+pi-mock captures all `ctx.ui.notify()`, `ctx.ui.setStatus()`, and `ctx.ui.setWidget()` calls from extensions.
+
+### Notifications, Status Updates, Widgets
+
+```typescript
+// invokeCommand returns side effects captured during execution
+const result = await mock.invokeCommand("my-command", "some args");
+assert.equal(result.notifications[0].message, "Command executed");
+assert.equal(result.statusUpdates[0].key, "my-ext");
+
+// Wait for async side effects (e.g. from polling loops)
+const notif = await mock.waitForNotification(n => n.notifyType === "error", 5_000);
+const status = await mock.waitForStatusUpdate(s => s.key === "health", 5_000);
+
+// Global arrays accumulate across all commands and turns
+assert.ok(mock.notifications.length > 0);
+assert.ok(mock.statusUpdates.length > 0);
+assert.ok(mock.widgets.length > 0);
+```
+
+### Argument Completions
+
+`mock.getCompletions()` tests `getArgumentCompletions` via the shared event bus.
+Extensions must register their completion functions during setup:
+
+```typescript
+// In your extension:
+const myCompletions = (prefix) => {
+  const items = [{ label: "attach" }, { label: "detach" }];
+  return prefix ? items.filter(i => i.label.startsWith(prefix)) : items;
+};
+
+pi.registerCommand("my-command", {
+  getArgumentCompletions: myCompletions,
+  handler: async (args, ctx) => { /* ... */ },
+});
+
+// Register for testability (pi doesn't expose completions via public API)
+pi.events.emit("_mock:register_completions", { name: "my-command", fn: myCompletions });
+```
+
+Then in tests:
+
+```typescript
+const all = await mock.getCompletions("my-command");           // all completions
+const filtered = await mock.getCompletions("my-command", "at"); // filtered
+assert.equal(filtered[0].label, "attach");
 ```
 
 ## Record & Replay

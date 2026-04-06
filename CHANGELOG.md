@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.0 (2026-04-06)
+
+### Features
+
+- **UI capture** — pi-mock now captures `ctx.ui.notify()`, `ctx.ui.setStatus()`, and `ctx.ui.setWidget()` calls from extensions. Previously these `extension_ui_request` events were silently dropped.
+- **`mock.notifications`** — Array of all captured notifications with `message`, `notifyType`, and `timestamp`.
+- **`mock.statusUpdates`** — Array of all captured status bar updates with `key`, `text`, and `timestamp`.
+- **`mock.widgets`** — Array of all captured widget updates with `key`, `lines`, `placement`, and `timestamp`.
+- **`mock.waitForNotification(pred?, timeout?)`** — Wait for a notification matching a predicate. Scans existing then subscribes.
+- **`mock.waitForStatusUpdate(pred?, timeout?)`** — Wait for a status update matching a predicate.
+- **`mock.getCommands()`** — List all registered slash commands via pi's `get_commands` RPC.
+- **`mock.getCompletions(command, prefix?)`** — Test `getArgumentCompletions` via the shared event bus pattern.
+- **`mock.invokeCommand()` returns side effects** — Now returns `{ notifications, statusUpdates }` captured during command execution.
+
+### How to use completions testing
+
+Extensions register their completion functions on the shared event bus:
+
+```js
+pi.events.emit("_mock:register_completions", { name: "my-cmd", fn: myCompletionFn });
+```
+
+Then `mock.getCompletions("my-cmd", "prefix")` invokes the function and returns results.
+This is needed because pi's public API (`pi.getCommands()`) returns `SlashCommandInfo` which doesn't include `getArgumentCompletions`.
+
 ## 1.1.0 (2026-03-31)
 
 ### Features
