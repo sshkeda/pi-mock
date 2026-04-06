@@ -87,6 +87,8 @@ test("start --help prints start usage", () => {
   assert.ok(stdout.includes("pi-mock start"));
   assert.ok(stdout.includes("--brain"));
   assert.ok(stdout.includes("--extension"));
+  assert.ok(stdout.includes("--provider"));
+  assert.ok(stdout.includes("--model"));
   assert.ok(stdout.includes("--sandbox"));
 });
 
@@ -102,6 +104,8 @@ test("run --help prints run usage", () => {
   const { stdout, exitCode } = run("run", "--help");
   assert.equal(exitCode, 0);
   assert.ok(stdout.includes("pi-mock run"));
+  assert.ok(stdout.includes("--provider"));
+  assert.ok(stdout.includes("--model"));
 });
 
 // ═══════════════════════════════════════════════════════════════════
@@ -154,4 +158,16 @@ test("start with nonexistent brain file gives clear error", () => {
   const { stderr, exitCode } = run("start", "--brain", "/tmp/pi-mock-nonexistent-brain.js");
   assert.equal(exitCode, 1);
   assert.ok(stderr.includes("not found") || stderr.includes("Brain file"), `stderr: ${stderr}`);
+});
+
+test("run with --provider but no --model gives clear error", () => {
+  const { stderr, exitCode } = run("run", "--provider", "openai", "hello");
+  assert.equal(exitCode, 1);
+  assert.ok(stderr.includes("piModel is required") || stderr.includes("--model"), `stderr: ${stderr}`);
+});
+
+test("start with --provider but no --model gives clear error", () => {
+  const { stderr, exitCode } = run("start", "--provider", "openai");
+  assert.equal(exitCode, 1);
+  assert.ok(stderr.includes("piModel is required") || stderr.includes("--model"), `stderr: ${stderr}`);
 });

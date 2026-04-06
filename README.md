@@ -72,6 +72,9 @@ pi-mock stop
 ```bash
 # Start → prompt → print results → stop (all in one)
 pi-mock run --brain ./brain.js -e ./ext.ts "do something"
+
+# Exercise pi's OpenAI adapter against the mock gateway
+pi-mock run --provider openai --model gpt-4.1-mini --brain echo "hello"
 ```
 
 ### Record & Replay
@@ -81,6 +84,9 @@ Record a real API session, then replay it deterministically:
 ```bash
 # Record — forwards to real API, saves transcript
 pi-mock record --model claude-sonnet-4-20250514 -e ./ext.ts -o session.json "build a todo app"
+
+# Record while exercising pi's OpenAI adapter
+pi-mock record --provider openai --model gpt-4.1-mini -e ./ext.ts -o session.json "build a todo app"
 
 # Replay — uses saved transcript as brain (free, fast, deterministic)
 pi-mock run --brain session.json -e ./ext.ts "build a todo app"
@@ -458,6 +464,13 @@ await mock.abort();
 // Raw RPC: any command pi supports
 const state = await mock.sendRpc({ type: "get_state" });
 console.log(state.data.model); // { provider: "pi-mock", id: "mock" }
+
+// Exercise pi's real provider adapter against the mock gateway
+const openaiMock = await createMock({
+  brain: text("ok"),
+  piProvider: "openai",
+  piModel: "gpt-4.1-mini",
+});
 ```
 
 ## Edge-Error Simulation
@@ -660,8 +673,9 @@ replay("./session.json")           // Replay transcript as brain
 
 ### Providers
 
-- **pi always sends Anthropic-format requests** — The mock spawns pi with the `pi-mock` provider using the `anthropic-messages` API. The gateway translates responses into the correct format for each provider, but the incoming request from pi is always Anthropic-shaped.
-- **Record/replay is Anthropic and OpenAI only** — `createRecorder()` supports forwarding to Anthropic and OpenAI. Google is not yet supported for recording. The raw request from pi is Anthropic-format, so OpenAI recording may have issues with tool schema translation.
+- **Default mode uses Anthropic-format requests** — By default, the mock spawns pi with the `pi-mock` provider using the `anthropic-messages` API, so incoming requests are Anthropic-shaped.
+- **Provider adapter testing is supported** — Pass `piProvider` + `piModel` to `createMock()` / `createInteractiveMock()` to make pi use its real provider adapter against the mock gateway (for example `openai` + `gpt-4.1-mini`). This lets tests inspect the exact request shape pi sends for that provider.
+- **Record/replay is Anthropic and OpenAI only** — `createRecorder()` supports forwarding to Anthropic and OpenAI. Google is not yet supported for recording.
 - **`script()` returns a fallback on exhaustion** — If a `script()` brain runs out of responses, it returns `text("(script exhausted)")` instead of throwing. Check for this in assertions if your test expects exact response counts.
 - **`replay()` throws on exhaustion** — If a `replay()` brain is called more times than there are recorded turns, it throws an error. This prevents false-positive tests by failing loudly when the test diverges from the recording.
 

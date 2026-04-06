@@ -82,6 +82,10 @@ export interface InteractiveMockOptions {
   brain: Brain;
   /** Extension paths to load. */
   extensions?: string[];
+  /** Provider pi should use when talking to the gateway. Default: "pi-mock" */
+  piProvider?: string;
+  /** Model pi should use when talking to the gateway. Default: "mock" */
+  piModel?: string;
   /** Network rules. */
   network?: {
     default?: NetworkAction;
@@ -304,6 +308,10 @@ async function loadPtySpawn(): Promise<typeof import("node-pty").spawn> {
 export async function createInteractiveMock(
   options: InteractiveMockOptions,
 ): Promise<InteractiveMock> {
+  if (options.piProvider && options.piProvider !== "pi-mock" && !options.piModel) {
+    throw new Error("createInteractiveMock(): piModel is required when piProvider is not \"pi-mock\".");
+  }
+
   const ptySpawn = await loadPtySpawn();
 
   let closed = false;
@@ -588,15 +596,18 @@ export async function createInteractiveMock(
 
   // ── 3. Build pi args (NO --mode rpc — interactive mode) ──
 
+  const provider = options.piProvider ?? "pi-mock";
+  const model = options.piModel ?? "mock";
+
   const args: string[] = [
     "--no-session",
     "--no-extensions",
     "--no-skills",
     "--no-prompt-templates",
     "--provider",
-    "pi-mock",
+    provider,
     "--model",
-    "mock",
+    model,
     ...(options.piArgs ?? []),
   ];
 

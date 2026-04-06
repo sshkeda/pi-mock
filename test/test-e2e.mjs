@@ -148,6 +148,31 @@ test("HttpErrorBlock returns real HTTP errors", async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// Test 7: Use pi's OpenAI provider adapter against the mock gateway
+// ═══════════════════════════════════════════════════════════════════
+test("piProvider=openai sends OpenAI Responses requests to the gateway", async () => {
+  const mock = await createMock({
+    brain: () => text("ok"),
+    piProvider: "openai",
+    piModel: "gpt-4.1-mini",
+    startupTimeoutMs: 15000,
+  });
+
+  try {
+    const events = await mock.run("hello from openai", TIMEOUT);
+    assert.ok(events.some(e => e.type === "agent_end"), "should complete");
+
+    const req = mock.requests.at(-1);
+    assert.ok(req, "should capture provider request");
+    assert.equal(req._provider, "openai-responses");
+    assert.equal(req.model, "gpt-4.1-mini");
+    assert.ok(req.messages.length >= 1, "should include at least one message");
+  } finally {
+    await mock.close();
+  }
+});
+
 // Cleanup
 // ═══════════════════════════════════════════════════════════════════
 test.after(() => {

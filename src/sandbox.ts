@@ -39,6 +39,10 @@ export interface SandboxConfig {
   gatewayPort: number;
   /** Extension file paths to load. */
   extensions?: string[];
+  /** Provider pi should use when talking to the gateway. Default: "pi-mock" */
+  piProvider?: string;
+  /** Model pi should use when talking to the gateway. Default: "mock" */
+  piModel?: string;
   /** Working directory for pi inside the container. */
   cwd?: string;
   /** Extra CLI args for pi. */
@@ -114,6 +118,9 @@ function createAgentDir(gatewayUrl: string): string {
 export function spawnLocal(config: SandboxConfig): SpawnResult {
   const agentDir = createAgentDir(`http://127.0.0.1:${config.gatewayPort}`);
 
+  const provider = config.piProvider ?? "pi-mock";
+  const model = config.piModel ?? "mock";
+
   const args = [
     "--mode",
     "rpc",
@@ -122,9 +129,9 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     "--no-skills",
     "--no-prompt-templates",
     "--provider",
-    "pi-mock",
+    provider,
     "--model",
-    "mock",
+    model,
     ...(config.piArgs ?? []),
   ];
 
@@ -315,6 +322,9 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
   const helperContainerDir = `/ext/helper`;
   dockerArgs.push("-v", `${dirname(helperExt)}:${helperContainerDir}:ro`);
 
+  const provider = config.piProvider ?? "pi-mock";
+  const model = config.piModel ?? "mock";
+
   const piCmd = [
     "pi",
     "--mode",
@@ -324,9 +334,9 @@ export function spawnSandbox(config: SandboxConfig): SpawnResult {
     "--no-skills",
     "--no-prompt-templates",
     "--provider",
-    "pi-mock",
+    provider,
     "--model",
-    "mock",
+    model,
     ...(config.piArgs ?? []),
     "-e", `${helperContainerDir}/${basename(helperExt)}`,
     ...extArgs,

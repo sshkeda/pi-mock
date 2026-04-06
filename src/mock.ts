@@ -67,6 +67,17 @@ export interface MockOptions {
   brain: Brain;
   /** Extension paths to load. */
   extensions?: string[];
+  /**
+   * Which provider pi should use when talking to the gateway.
+   * Default: "pi-mock" (Anthropic-format mock provider).
+   * Set to "openai", "anthropic", "google", etc. to exercise pi's real provider adapter.
+   */
+  piProvider?: string;
+  /**
+   * Model ID pi should use when talking to the gateway.
+   * Default: "mock" when piProvider is "pi-mock".
+   */
+  piModel?: string;
   /** Use Docker sandbox for network isolation. Default: false */
   sandbox?: boolean;
   /** Network rules. Only meaningful with sandbox: true for full isolation. */
@@ -267,6 +278,10 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
 
 export async function createMock(options: MockOptions): Promise<Mock> {
   let closed = false;
+
+  if (options.piProvider && options.piProvider !== "pi-mock" && !options.piModel) {
+    throw new Error("createMock(): piModel is required when piProvider is not \"pi-mock\".");
+  }
   let eventCursor = 0; // tracks start of current cycle for drain()
   let requestCursor = 0; // tracks position for waitForRequest() — advances after each match
 
@@ -458,6 +473,8 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       piBinary: options.piBinary,
       volumes: options.volumes,
       image: options.image,
+      piProvider: options.piProvider,
+      piModel: options.piModel,
     };
 
     if (options.sandbox) {

@@ -30,6 +30,13 @@ import { type Brain, type BrainResponse } from "./anthropic.js";
 import { type NetworkRule } from "./gateway.js";
 import { createRecorder, replay } from "./record.js";
 
+function inferProviderFromModel(model: string): string {
+  if (/^(claude|anthropic)/i.test(model)) return "anthropic";
+  if (/^(gpt|o[134]-|openai|chatgpt)/i.test(model)) return "openai";
+  if (/^(gemini|google)/i.test(model)) return "google";
+  return "pi-mock";
+}
+
 // ─── State file ──────────────────────────────────────────────────────
 
 const DEFAULT_STATE_FILE = resolve(tmpdir(), "pi-mock.json");
@@ -204,6 +211,8 @@ Usage: pi-mock start [options]
 Options:
   --brain <file|echo>       Brain: JS file or built-in name. Default: echo
   -e, --extension <path>    Extension to load (repeatable).
+  --provider <id>           Pi provider to exercise. Default: pi-mock
+  --model <id>              Pi model ID. Required when --provider is not pi-mock
   --sandbox                 Use Docker container with network isolation.
   --network-default <action> Default network action: allow|block. Default: block
   --allow <host>            Allow network access to host (repeatable).
@@ -238,6 +247,8 @@ Options:
   const options: MockOptions = {
     brain,
     extensions,
+    piProvider: args["provider"] as string | undefined,
+    piModel: args["model"] as string | undefined,
     sandbox: !!args["sandbox"],
     network: {
       default: (args["network-default"] as string as "allow" | "block") ?? "block",
@@ -292,6 +303,8 @@ Usage: pi-mock record [options] <prompt message>
 
 Options:
   --model <id>              Real model ID (required). e.g. claude-sonnet-4-20250514
+  --provider <id>           Pi provider to exercise while recording. Default: inferred from --model
+  --pi-model <id>           Pi model ID to use while recording. Default: same as --model
   -o, --output <file>       Transcript output path. Default: session.json
   --api-key <key>           API key (default: from ANTHROPIC_API_KEY / OPENAI_API_KEY)
   -e, --extension <path>    Extension to load (repeatable).
@@ -338,9 +351,14 @@ Options:
     },
   });
 
+  const piProvider = (args["provider"] as string | undefined) ?? inferProviderFromModel(model);
+  const piModel = (args["pi-model"] as string | undefined) ?? (piProvider !== "pi-mock" ? model : undefined);
+
   const mock = await createMock({
     brain: rec.brain,
     extensions,
+    piProvider,
+    piModel,
     sandbox: !!args["sandbox"],
     network: {
       // Default to allow for recording — extensions need real network
@@ -383,6 +401,8 @@ Usage: pi-mock run [options] <prompt message>
 Options:
   --brain <file|echo>       Brain: JS file or built-in name. Default: echo
   -e, --extension <path>    Extension to load (repeatable).
+  --provider <id>           Pi provider to exercise. Default: pi-mock
+  --model <id>              Pi model ID. Required when --provider is not pi-mock
   --sandbox                 Use Docker container with network isolation.
   --network-default <action> Default network action: allow|block. Default: block
   --allow <host>            Allow network access to host (repeatable).
@@ -420,6 +440,8 @@ Options:
   const mock = await createMock({
     brain,
     extensions,
+    piProvider: args["provider"] as string | undefined,
+    piModel: args["model"] as string | undefined,
     sandbox: !!args["sandbox"],
     network: {
       default: (args["network-default"] as string as "allow" | "block") ?? "block",
@@ -527,6 +549,8 @@ Commands:
 Start/Run options:
   --brain <file|echo>       Brain: JS file (default export) or built-in name. Default: echo
   -e, --extension <path>    Extension to load (repeatable).
+  --provider <id>           Pi provider to exercise. Default: pi-mock
+  --model <id>              Pi model ID. Required when --provider is not pi-mock
   --sandbox                 Use Docker container with network isolation.
   --network-default <action> Default network action: allow|block. Default: block
   --allow <host>            Allow network access to host (repeatable).
@@ -538,6 +562,8 @@ Start/Run options:
 
 Record options:
   --model <id>              Real model ID (required). e.g. claude-sonnet-4-20250514
+  --provider <id>           Pi provider to exercise while recording. Default: inferred from --model
+  --pi-model <id>           Pi model ID to use while recording. Default: same as --model
   -o, --output <file>       Transcript output path. Default: session.json
   --api-key <key>           API key (default: from ANTHROPIC_API_KEY / OPENAI_API_KEY)
 
@@ -561,9 +587,11 @@ Examples:
   pi-mock stop
 
   pi-mock run --brain ./brain.js -e ./ext.ts "do something"
+  pi-mock run --provider openai --model gpt-4.1-mini --brain echo "hello"
 
   # Record a real session, then replay it
   pi-mock record --model claude-sonnet-4-20250514 -e ./ext.ts -o session.json "build a todo app"
+  pi-mock record --provider openai --model gpt-4.1-mini -e ./ext.ts -o session.json "build a todo app"
   pi-mock run --brain session.json -e ./ext.ts "build a todo app"
 
   # Hand-write a scenario as JSON
