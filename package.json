@@ -60,7 +60,7 @@
     "prepare": "npm run build"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": ">=0.62.0",
+    "@mariozechner/pi-coding-agent": ">=0.65.0",
     "node-pty": ">=1.0.0"
   },
   "peerDependenciesMeta": {
