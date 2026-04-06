@@ -47,13 +47,7 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": [
-    "dist",
-    "src",
-    "Dockerfile",
-    "docker-entrypoint.sh",
-    "CHANGELOG.md"
-  ],
+
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test --test-force-exit test/test-providers.mjs test/test-network.mjs test/test-replay.mjs test/test-cli.mjs test/test-e2e.mjs test/test-issues.mjs test/test-steer.mjs test/test-helper.mjs test/test-edge-errors.mjs test/test-ui-capture.mjs",
@@ -63,7 +57,7 @@
     "test:docker": "bash test/docker-matrix.sh",
     "test:issues": "node test/test-issues.mjs",
     "test:edge-errors": "npm run build && node --test --test-force-exit test/test-edge-errors.mjs",
-    "prepublishOnly": "npm run build"
+    "prepare": "npm run build"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": ">=0.62.0",
