@@ -1,7 +1,6 @@
 # pi-mock
 
-[![npm version](https://img.shields.io/npm/v/pi-mock.svg)](https://www.npmjs.com/package/pi-mock)
-[![license](https://img.shields.io/npm/l/pi-mock.svg)](https://github.com/sshkeda/pi-mock/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/sshkeda/pi-mock/blob/main/LICENSE)
 
 Integration testing harness for [pi](https://github.com/badlogic/pi-mono) extensions.
 
