@@ -30,7 +30,7 @@ For Docker sandbox mode, [Docker](https://docs.docker.com/get-docker/) must be i
 ## Install
 
 ```bash
-npm install pi-mock
+npm install github:sshkeda/pi-mock
 ```
 
 ## CLI Usage
