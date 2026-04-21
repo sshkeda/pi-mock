@@ -46,12 +46,22 @@ export type KeyName =
   | "down"
   | "left"
   | "right"
+  | "ctrl+a"
+  | "ctrl+b"
   | "ctrl+c"
   | "ctrl+d"
-  | "ctrl+l"
-  | "ctrl+a"
   | "ctrl+e"
-  | "ctrl+u";
+  | "ctrl+f"
+  | "ctrl+g"
+  | "ctrl+l"
+  | "ctrl+n"
+  | "ctrl+o"
+  | "ctrl+p"
+  | "ctrl+r"
+  | "ctrl+s"
+  | "ctrl+t"
+  | "ctrl+u"
+  | "ctrl+w";
 
 const KEY_MAP: Record<KeyName, string> = {
   enter: "\r",
@@ -64,16 +74,37 @@ const KEY_MAP: Record<KeyName, string> = {
   down: "\x1b[B",
   left: "\x1b[D",
   right: "\x1b[C",
+  "ctrl+a": "\x01",
+  "ctrl+b": "\x02",
   "ctrl+c": "\x03",
   "ctrl+d": "\x04",
-  "ctrl+l": "\x0c",
-  "ctrl+a": "\x01",
   "ctrl+e": "\x05",
+  "ctrl+f": "\x06",
+  "ctrl+g": "\x07",
+  "ctrl+l": "\x0c",
+  "ctrl+n": "\x0e",
+  "ctrl+o": "\x0f",
+  "ctrl+p": "\x10",
+  "ctrl+r": "\x12",
+  "ctrl+s": "\x13",
+  "ctrl+t": "\x14",
   "ctrl+u": "\x15",
+  "ctrl+w": "\x17",
 };
 
 /** Widened lookup for untyped HTTP API input. */
 const KEY_LOOKUP = new Map(Object.entries(KEY_MAP));
+
+// Structural type describing the minimal shape of @xterm/headless we rely on —
+// avoids a hard TS dependency on a package that callers opt into.
+interface TerminalLike {
+  write(data: string, cb?: () => void): void;
+  buffer: {
+    active: {
+      getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined;
+    };
+  };
+}
 
 // ─── Options ────────────────────────────────────────────────────────
 
@@ -141,6 +172,14 @@ export interface InteractiveMock {
   clearOutput(): void;
   /** Resize the terminal mid-test. */
   resize(cols: number, rows: number): void;
+  /**
+   * Render the current raw terminal output through a headless xterm and
+   * return the visible screen as an array of lines (ANSI stripped). Useful
+   * for asserting what the user actually SEES (after cursor positioning,
+   * line overwriting, alternate screen, etc.), rather than the full scroll
+   * history. Requires `@xterm/headless` as a peer dep.
+   */
+  visibleScreen(): Promise<string[]>;
 
   /** Replace the brain mid-test. */
   setBrain(brain: Brain): void;
@@ -745,6 +784,33 @@ export async function createInteractiveMock(
 
     resize(c, r) {
       pty.resize(c, r);
+    },
+
+    async visibleScreen() {
+      let headless: unknown;
+      try {
+        // @ts-expect-error — optional peer dep; typed structurally via TerminalLike below.
+        headless = await import("@xterm/headless");
+      } catch {
+        throw new Error(
+          "visibleScreen() requires the '@xterm/headless' peer dependency.\n" +
+            "Install it with: npm install --save-dev @xterm/headless",
+        );
+      }
+      if (!headless || typeof headless !== "object") {
+        throw new Error("@xterm/headless did not export a module object");
+      }
+      const mod = headless as Record<string, unknown>;
+      const fromDefault = mod.default && typeof mod.default === "object" ? (mod.default as Record<string, unknown>) : undefined;
+      const TerminalCtor = (mod.Terminal ?? fromDefault?.Terminal) as undefined | (new (opts: Record<string, unknown>) => TerminalLike);
+      if (typeof TerminalCtor !== "function") throw new Error("@xterm/headless did not export a Terminal class");
+      const term = new TerminalCtor({ cols, rows, allowProposedApi: true });
+      await new Promise<void>((resolve) => term.write(outputBuf, resolve));
+      const lines: string[] = [];
+      for (let i = 0; i < rows; i++) {
+        lines.push(term.buffer.active.getLine(i)?.translateToString(true) ?? "");
+      }
+      return lines;
     },
 
     setBrain(b) {
