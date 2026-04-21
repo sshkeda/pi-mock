@@ -143,7 +143,7 @@ export interface InteractiveMockOptions {
   /**
    * Pattern that indicates pi has started and is ready for input.
    * Matched against ANSI-stripped terminal output.
-   * Default: /\d+\.\d+%\/\d+k/ (matches pi's status bar, e.g. "0.0%/128k")
+   * Default: /\d+\.\d+%\/\d+(\.\d+)?[kKmM]/ (matches pi's status bar, e.g. "0.0%/128k" or "0.0%/1.0M")
    */
   readyPattern?: string | RegExp;
 }
@@ -712,7 +712,7 @@ export async function createInteractiveMock(
 
   // ── 7. Wait for pi to be ready ──
 
-  const readyPattern = options.readyPattern ?? /\d+\.\d+%\/\d+k/;
+  const readyPattern = options.readyPattern ?? /\d+\.\d+%\/\d+(\.\d+)?[kKmM]/;
   const startupTimeout = options.startupTimeoutMs ?? 15_000;
 
   try {
