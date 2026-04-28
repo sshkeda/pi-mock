@@ -17,8 +17,9 @@
  */
 
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import { resolve, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { existsSync, mkdtempSync, writeFileSync, rmSync, accessSync, chmodSync, constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -789,13 +790,22 @@ export async function createInteractiveMock(
     async visibleScreen() {
       let headless: unknown;
       try {
-        // @ts-expect-error — optional peer dep; typed structurally via TerminalLike below.
-        headless = await import("@xterm/headless");
+        // Resolve optional peers from the caller's cwd first. This matters when
+        // pi-mock is consumed via `file:../pi-mock`: Node resolves a bare dynamic
+        // import from pi-mock's real path, not the consumer's node_modules.
+        const req = createRequire(join(process.cwd(), "package.json"));
+        const resolved = req.resolve("@xterm/headless");
+        headless = await import(pathToFileURL(resolved).href);
       } catch {
-        throw new Error(
-          "visibleScreen() requires the '@xterm/headless' peer dependency.\n" +
-            "Install it with: npm install --save-dev @xterm/headless",
-        );
+        try {
+          // @ts-expect-error — optional peer dep; typed structurally via TerminalLike below.
+          headless = await import("@xterm/headless");
+        } catch {
+          throw new Error(
+            "visibleScreen() requires the '@xterm/headless' peer dependency.\n" +
+              "Install it with: npm install --save-dev @xterm/headless",
+          );
+        }
       }
       if (!headless || typeof headless !== "object") {
         throw new Error("@xterm/headless did not export a module object");

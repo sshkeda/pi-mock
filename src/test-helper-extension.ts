@@ -66,7 +66,7 @@ export default function (pi: any) {
   // Tests can query this to verify their extension's tool registration
   // (e.g. confirming a bridge proxy showed up as expected). Uses
   // pi.getAllTools() so it sees tools registered via every extension's
-  // pi reference.
+  // pi reference, not just the helper's.
   pi.registerCommand("_mock_get_registered_tools", {
     description: "[pi-mock] Emit names of every registered tool",
     handler: async (_args: string, ctx: any) => {

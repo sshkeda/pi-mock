@@ -91,6 +91,14 @@ export interface MockOptions {
   piBinary?: string;
   /** Extra pi CLI args. */
   piArgs?: string[];
+  /**
+   * Path to an existing pi session JSONL file to load as pi's active
+   * session. When set, pi-mock spawns pi with `--session <path>` instead
+   * of the default `--no-session`. Useful for tests that need pi to see
+   * preloaded conversation history (e.g. a cross-provider session that
+   * triggers a specific extension code path).
+   */
+  sessionFile?: string;
   /** Extra env vars. */
   env?: Record<string, string>;
   /** Gateway port. 0 = random (recommended). Default: 0 */
@@ -517,6 +525,7 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       extensions: options.extensions,
       cwd: options.cwd,
       piArgs: options.piArgs,
+      sessionFile: options.sessionFile,
       env: options.env,
       piBinary: options.piBinary,
       volumes: options.volumes,

@@ -47,6 +47,14 @@ export interface SandboxConfig {
   cwd?: string;
   /** Extra CLI args for pi. */
   piArgs?: string[];
+  /**
+   * Path to an existing pi session JSONL file to load as pi's active
+   * session. When set, pi-mock spawns pi with `--session <path>` instead
+   * of the default `--no-session`. Useful for tests that need pi to see
+   * preloaded conversation history (e.g. a cross-provider session that
+   * triggers a specific extension code path).
+   */
+  sessionFile?: string;
   /** Extra environment variables. */
   env?: Record<string, string>;
   /** Docker image name. Default: auto-build "pi-mock-sandbox" */
@@ -121,10 +129,17 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
   const provider = config.piProvider ?? "pi-mock";
   const model = config.piModel ?? "mock";
 
+  // Default to ephemeral (--no-session) unless the test explicitly wants
+  // pi to load a real session file via the sessionFile option. Mutually
+  // exclusive: passing sessionFile drops --no-session and adds
+  // --session <path>.
+  const sessionArgs = config.sessionFile
+    ? ["--session", config.sessionFile]
+    : ["--no-session"];
   const args = [
     "--mode",
     "rpc",
-    "--no-session",
+    ...sessionArgs,
     "--no-extensions",
     "--no-skills",
     "--no-prompt-templates",
