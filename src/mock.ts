@@ -228,6 +228,28 @@ export interface Mock {
   setActiveTools(tools: string[] | "*"): Promise<void>;
 
   /**
+   * List the names of every tool registered with pi (across all loaded
+   * extensions). Tests can use this to verify their extension's tool
+   * registration timing — e.g. confirming that a bridge proxy showed
+   * up after `session_start` rather than during extension load.
+   */
+  getRegisteredTools(): Promise<string[]>;
+
+  /**
+   * List the names of pi's currently-active tool set. Subset of
+   * `getRegisteredTools()` filtered by pi's active selection.
+   */
+  getActiveTools(): Promise<string[]>;
+
+  /**
+   * Switch pi's current session to an existing JSONL file on disk.
+   * Equivalent to pi's `switch_session` RPC. Useful for preloading a
+   * test fixture that has prior conversation history before exercising
+   * the extension under test.
+   */
+  switchSession(sessionPath: string): Promise<unknown>;
+
+  /**
    * Snapshot the pi process's resource usage (RSS memory, CPU time).
    * Uses `ps` to read stats — works on macOS and Linux.
    * Returns null if the process has already exited.
@@ -236,6 +258,32 @@ export interface Mock {
 
   /** Shut everything down. */
   close(): Promise<void>;
+}
+
+/**
+ * Run a slash command via the test-helper extension and parse the
+ * resulting `<prefix><json>` notification it emits. Used by the
+ * test-helper-backed methods (`getRegisteredTools`, `getActiveTools`)
+ * — they all share this invoke-then-listen pattern.
+ */
+async function invokeAndParseNotification<T = unknown>(
+  rpc: RpcClient,
+  command: string,
+  notificationPrefix: string,
+  methodName: string,
+): Promise<T> {
+  const notifyBefore = rpc.notifications.length;
+  const resp = await rpc.send({ type: "prompt", message: command });
+  if (!resp.success) throw new Error(`${methodName} failed: ${(resp as any).error}`);
+  try {
+    const n = await rpc.waitForNotification(
+      (n) => n.message.startsWith(notificationPrefix) && rpc.notifications.indexOf(n) >= notifyBefore,
+      5_000,
+    );
+    return JSON.parse(n.message.slice(notificationPrefix.length));
+  } catch {
+    throw new Error(`${methodName} timed out waiting for "${notificationPrefix}" notification`);
+  }
 }
 
 // ─── Startup polling ─────────────────────────────────────────────────
@@ -764,6 +812,30 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       const arg = tools === "*" ? "*" : tools.join(",");
       const resp = await rpc.send({ type: "prompt", message: `/_mock_set_tools ${arg}` });
       if (!resp.success) throw new Error(`setActiveTools failed: ${resp.error}`);
+    },
+
+    async getRegisteredTools() {
+      return await invokeAndParseNotification(
+        rpc,
+        "/_mock_get_registered_tools",
+        "_mock_registered_tools:",
+        "getRegisteredTools",
+      );
+    },
+
+    async getActiveTools() {
+      return await invokeAndParseNotification(
+        rpc,
+        "/_mock_get_active_tools",
+        "_mock_active_tools:",
+        "getActiveTools",
+      );
+    },
+
+    async switchSession(sessionPath) {
+      const resp = await rpc.send({ type: "switch_session", sessionPath });
+      if (!resp.success) throw new Error(`switchSession failed: ${(resp as any).error}`);
+      return (resp as any).data;
     },
 
     getProcessStats() {

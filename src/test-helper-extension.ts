@@ -61,6 +61,34 @@ export default function (pi: any) {
     },
   });
 
+  // ── /_mock_get_registered_tools ──
+  // Emit names of every tool registered with pi (via any extension).
+  // Tests can query this to verify their extension's tool registration
+  // (e.g. confirming a bridge proxy showed up as expected). Uses
+  // pi.getAllTools() so it sees tools registered via every extension's
+  // pi reference.
+  pi.registerCommand("_mock_get_registered_tools", {
+    description: "[pi-mock] Emit names of every registered tool",
+    handler: async (_args: string, ctx: any) => {
+      const all = typeof pi.getAllTools === "function" ? pi.getAllTools() : [];
+      const names = Array.isArray(all)
+        ? all.map((t: any) => t?.name).filter((n: any) => typeof n === "string")
+        : [];
+      ctx.ui.notify("_mock_registered_tools:" + JSON.stringify(names), "info");
+    },
+  });
+
+  // ── /_mock_get_active_tools ──
+  // Emit names of pi's currently-active tool set. Subset of registered
+  // tools filtered by pi's active selection for the current model/mode.
+  pi.registerCommand("_mock_get_active_tools", {
+    description: "[pi-mock] Emit names of pi's currently-active tool set",
+    handler: async (_args: string, ctx: any) => {
+      const active = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+      ctx.ui.notify("_mock_active_tools:" + JSON.stringify(active ?? []), "info");
+    },
+  });
+
   // ── /_mock_get_completions <command> [prefix] ──
   // Invokes a completion function previously registered via the event bus.
   // Emits results as a notification so mock.getCompletions() can capture them.
