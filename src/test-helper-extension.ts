@@ -22,6 +22,7 @@ export default function (pi: any) {
   //   pi.events.emit("_mock:register_completions", { name: "cmd", fn: completionFn })
   // The helper captures these so mock.getCompletions() can invoke them.
   const completionFns = new Map<string, (prefix: string) => any>();
+  const invocationFns = new Map<string, (input: any, ctx: any) => any>();
 
   pi.events.on("_mock:register_completions", (data: { name: string; fn: (prefix: string) => any }) => {
     if (data?.name && typeof data.fn === "function") {
@@ -29,9 +30,16 @@ export default function (pi: any) {
     }
   });
 
-  // Also store the map on the event bus so extensions can register directly
+  pi.events.on("_mock:register_invocation", (data: { name: string; fn: (input: any, ctx: any) => any }) => {
+    if (data?.name && typeof data.fn === "function") {
+      invocationFns.set(data.name, data.fn);
+    }
+  });
+
+  // Also store the maps on the event bus so extensions can register directly
   // if they prefer: (pi.events as any)._mockCompletionFns.set("cmd", fn)
   (pi.events as any)._mockCompletionFns = completionFns;
+  (pi.events as any)._mockInvocationFns = invocationFns;
 
   // ─�� /_mock_emit_event <type> [json] ──
   // Emits an event on pi.events so extensions can react.
@@ -86,6 +94,69 @@ export default function (pi: any) {
     handler: async (_args: string, ctx: any) => {
       const active = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
       ctx.ui.notify("_mock_active_tools:" + JSON.stringify(active ?? []), "info");
+    },
+  });
+
+  function syntheticCtx(baseCtx: any, origin: any) {
+    const mark = () => baseCtx.ui.notify("_mock_ui_origin:" + JSON.stringify(origin), "info");
+    return {
+      ...baseCtx,
+      hasUI: origin.hasUI ?? true,
+      ui: new Proxy(baseCtx.ui, {
+        get(target, prop) {
+          if (prop === "notify") return (message: string, type?: string) => { mark(); return target.notify(message, type); };
+          if (prop === "setStatus") return (key: string, text: string | undefined) => { mark(); return target.setStatus(key, text); };
+          if (prop === "setWidget") return (key: string, content: string[] | undefined, options?: any) => { mark(); return target.setWidget(key, content, options); };
+          return target[prop];
+        },
+      }),
+    };
+  }
+
+  // ── /_mock_invoke_tool <json> ──
+  // Invokes logic registered through `_mock:register_invocation` inside the
+  // real pi process, allowing tests to exercise UI side-effects with a
+  // synthetic command/tool context while avoiding an LLM turn.
+  pi.registerCommand("_mock_invoke_tool", {
+    description: "[pi-mock] Invoke registered synthetic tool logic",
+    handler: async (args: string, ctx: any) => {
+      const payload = JSON.parse(args || "{}");
+      const name = payload.name;
+      const params = payload.params ?? {};
+      const origin = { source: "synthetic-tool", toolName: name, ...(payload.origin ?? {}) };
+      const fn = invocationFns.get(name);
+      if (!fn) {
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: false, error: `Tool not found: ${name}` }), "error");
+        return;
+      }
+      try {
+        const result = await fn(params, syntheticCtx(ctx, origin));
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: true, result }), "info");
+      } catch (error) {
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), "error");
+      }
+    },
+  });
+
+  // ── /_mock_invoke_command <json> ──
+  pi.registerCommand("_mock_invoke_command", {
+    description: "[pi-mock] Invoke registered synthetic command logic",
+    handler: async (args: string, ctx: any) => {
+      const payload = JSON.parse(args || "{}");
+      const name = payload.name;
+      const commandArgs = payload.args ?? "";
+      const origin = { source: "synthetic-command", commandName: name, ...(payload.origin ?? {}) };
+      const fn = invocationFns.get(name);
+      if (!fn) {
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: false, error: `Command not found: ${name}` }), "error");
+        return;
+      }
+      try {
+        const result = await fn(commandArgs, syntheticCtx(ctx, origin));
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: true, result }), "info");
+      } catch (error) {
+        ctx.ui.notify("_mock_invoke_result:" + JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), "error");
+      }
     },
   });
 

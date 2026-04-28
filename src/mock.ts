@@ -30,6 +30,8 @@ import {
   type CapturedNotification,
   type CapturedStatusUpdate,
   type CapturedWidget,
+  type CapturedUIOrigin,
+  type CapturedEditorOp,
 } from "./rpc.js";
 import {
   spawnLocal,
@@ -42,12 +44,12 @@ import {
   type BrainResponse,
   text,
 } from "./anthropic.js";
-
+import { createFastMock } from "./fast-mock.js";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
 export type { ProcessStats } from "./process-stats.js";
-export type { CapturedNotification, CapturedStatusUpdate, CapturedWidget } from "./rpc.js";
+export type { CapturedNotification, CapturedStatusUpdate, CapturedWidget, CapturedUIOrigin, CapturedEditorOp } from "./rpc.js";
 
 /** Slash command info returned by getCommands(). */
 export interface SlashCommandInfo {
@@ -62,9 +64,28 @@ export interface CompletionItem {
   description?: string;
 }
 
+export interface InvocationContextOverrides {
+  hasUI?: boolean;
+  sessionId?: string;
+  invocationId?: string;
+}
+
+export interface InvocationCapture {
+  notifications: CapturedNotification[];
+  statusUpdates: CapturedStatusUpdate[];
+  widgets: CapturedWidget[];
+  editorOps?: CapturedEditorOp[];
+}
+
+export interface SyntheticInvocationResult extends InvocationCapture {
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
 export interface MockOptions {
-  /** Brain function — you are the model. */
-  brain: Brain;
+  /** Brain function — you are the model. Omit to use in-process fast mode. */
+  brain?: Brain;
   /** Extension paths to load. */
   extensions?: string[];
   /**
@@ -169,6 +190,8 @@ export interface Mock {
   readonly statusUpdates: CapturedStatusUpdate[];
   /** All captured widget updates from ctx.ui.setWidget(). */
   readonly widgets: CapturedWidget[];
+  /** All captured editor text operations from ctx.ui editor helpers. */
+  readonly editorOps: CapturedEditorOp[];
   /** Pi's stderr output lines. */
   readonly stderr: string[];
   /** Gateway port. */
@@ -203,7 +226,10 @@ export interface Mock {
    * Returns the command result including any notifications or status updates
    * that occurred during execution.
    */
-  invokeCommand(command: string, args?: string): Promise<{ notifications: CapturedNotification[]; statusUpdates: CapturedStatusUpdate[] }>;
+  invokeCommand(command: string, args?: string, overrides?: InvocationContextOverrides): Promise<InvocationCapture>;
+
+  /** Invoke a registered tool or synthetic invocation by name without an LLM turn. */
+  invokeTool(toolName: string, params?: Record<string, unknown>, overrides?: InvocationContextOverrides): Promise<SyntheticInvocationResult>;
 
   /**
    * Wait for a notification matching a predicate.
@@ -257,6 +283,9 @@ export interface Mock {
    */
   switchSession(sessionPath: string): Promise<unknown>;
 
+  /** List registered command names (fast mode only; full mode use getCommands()). */
+  getRegisteredCommands?(): Promise<string[]>;
+
   /**
    * Snapshot the pi process's resource usage (RSS memory, CPU time).
    * Uses `ps` to read stats — works on macOS and Linux.
@@ -274,6 +303,28 @@ export interface Mock {
  * test-helper-backed methods (`getRegisteredTools`, `getActiveTools`)
  * — they all share this invoke-then-listen pattern.
  */
+function applySyntheticOrigins<T extends InvocationCapture>(capture: T, fallbackOrigin?: CapturedUIOrigin): T {
+  const markers = capture.notifications
+    .filter((n) => n.message.startsWith("_mock_ui_origin:"))
+    .map((n) => {
+      try { return { eventIndex: n.eventIndex ?? -1, origin: JSON.parse(n.message.slice("_mock_ui_origin:".length)) as CapturedUIOrigin }; }
+      catch { return undefined; }
+    })
+    .filter((v): v is { eventIndex: number; origin: CapturedUIOrigin } => !!v);
+  const originFor = (eventIndex?: number): CapturedUIOrigin | undefined => {
+    let found: CapturedUIOrigin | undefined;
+    for (const marker of markers) {
+      if (eventIndex === undefined || marker.eventIndex < eventIndex) found = marker.origin;
+    }
+    return found ?? fallbackOrigin;
+  };
+  capture.notifications = capture.notifications.filter((n) => !n.message.startsWith("_mock_ui_origin:"));
+  for (const item of capture.notifications) item.origin = originFor(item.eventIndex);
+  for (const item of capture.statusUpdates) item.origin = originFor(item.eventIndex);
+  for (const item of capture.widgets) item.origin = originFor(item.eventIndex);
+  return capture;
+}
+
 async function invokeAndParseNotification<T = unknown>(
   rpc: RpcClient,
   command: string,
@@ -333,6 +384,8 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
 // ─── Create Mock ─────────────────────────────────────────────────────
 
 export async function createMock(options: MockOptions): Promise<Mock> {
+  if (!options.brain) return createFastMock(options);
+
   let closed = false;
 
   if (options.piProvider && options.piProvider !== "pi-mock" && !options.piModel) {
@@ -351,6 +404,7 @@ export async function createMock(options: MockOptions): Promise<Mock> {
 
   // Will be set after RPC client is created
   let rpc: RpcClient;
+  const editorOps: CapturedEditorOp[] = [];
 
   // ── Management API handler (wired into gateway) ──
 
@@ -606,6 +660,9 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     get widgets() {
       return rpc.widgets;
     },
+    get editorOps() {
+      return editorOps;
+    },
     stderr,
     get port() {
       return gw.port;
@@ -770,18 +827,54 @@ export async function createMock(options: MockOptions): Promise<Mock> {
       if (!resp.success) throw new Error(`emitEvent failed: ${resp.error}`);
     },
 
-    async invokeCommand(command, args) {
+    async invokeCommand(command, args, overrides) {
       const notifyBefore = rpc.notifications.length;
       const statusBefore = rpc.statusUpdates.length;
-      const msg = args ? `/${command} ${args}` : `/${command}`;
+      const widgetBefore = rpc.widgets.length;
+      const editorBefore = editorOps.length;
+      const origin: CapturedUIOrigin | undefined = overrides
+        ? { source: "synthetic-command", commandName: command, ...overrides }
+        : undefined;
+      const msg = overrides
+        ? `/_mock_invoke_command ${JSON.stringify({ name: command, args: args ?? "", origin })}`
+        : args ? `/${command} ${args}` : `/${command}`;
       const resp = await rpc.send({ type: "prompt", message: msg });
       if (!resp.success) throw new Error(`invokeCommand(${command}) failed: ${resp.error}`);
       // Give async notifications/status updates a moment to arrive
       await new Promise((r) => setTimeout(r, 50));
-      return {
+      const capture = {
         notifications: rpc.notifications.slice(notifyBefore),
         statusUpdates: rpc.statusUpdates.slice(statusBefore),
+        widgets: rpc.widgets.slice(widgetBefore),
+        editorOps: editorOps.slice(editorBefore),
       };
+      return applySyntheticOrigins(capture, origin);
+    },
+
+    async invokeTool(toolName, params = {}, overrides) {
+      const notifyBefore = rpc.notifications.length;
+      const statusBefore = rpc.statusUpdates.length;
+      const widgetBefore = rpc.widgets.length;
+      const editorBefore = editorOps.length;
+      const origin: CapturedUIOrigin = { source: "synthetic-tool", toolName, ...(overrides ?? {}) };
+      const resp = await rpc.send({
+        type: "prompt",
+        message: `/_mock_invoke_tool ${JSON.stringify({ name: toolName, params, origin })}`,
+      });
+      if (!resp.success) throw new Error(`invokeTool(${toolName}) failed: ${resp.error}`);
+      await new Promise((r) => setTimeout(r, 50));
+      const capture = applySyntheticOrigins({
+        notifications: rpc.notifications.slice(notifyBefore),
+        statusUpdates: rpc.statusUpdates.slice(statusBefore),
+        widgets: rpc.widgets.slice(widgetBefore),
+        editorOps: editorOps.slice(editorBefore),
+      }, origin);
+      const resultNotice = capture.notifications.find((n) => n.message.startsWith("_mock_invoke_result:"));
+      let parsed: { ok?: boolean; result?: unknown; error?: string } = { ok: true };
+      if (resultNotice) {
+        try { parsed = JSON.parse(resultNotice.message.slice("_mock_invoke_result:".length)); } catch { /* ignore */ }
+      }
+      return { ok: parsed.ok !== false, result: parsed.result, error: parsed.error, ...capture };
     },
 
     waitForNotification(pred, timeoutMs) {

@@ -196,10 +196,16 @@ await mock.invokeCommand("my-command", "args"); // invoke slash command (returns
 await mock.setActiveTools(["bash", "read"]);    // restrict active tools
 await mock.setActiveTools("*");                 // restore all tools
 
-// Slash command testing — capture output, notifications, status updates
+// Slash command testing — capture output, notifications, status updates, widgets
 const result = await mock.invokeCommand("manager", "list");
-console.log(result.notifications);  // [{message, notifyType, timestamp}]
-console.log(result.statusUpdates);  // [{key, text, timestamp}]
+console.log(result.notifications);  // [{message, notifyType, timestamp, origin?}]
+console.log(result.statusUpdates);  // [{key, text, timestamp, origin?}]
+console.log(result.widgets);        // [{key, lines, timestamp, origin?}]
+
+// Synthetic invocation for context-ownership tests
+const bg = await mock.invokeTool("my_tool", { mode: "sync" }, { hasUI: false, sessionId: "bg-1" });
+const ui = await mock.invokeTool("my_tool", { mode: "sync" }, { hasUI: true, sessionId: "ui-1" });
+console.log(ui.widgets[0].origin);  // { source, sessionId, invocationId, hasUI, toolName }
 
 // Notification & status streams — test polling loops, status bar updates
 const notif = await mock.waitForNotification(n => n.message.includes("cycle"));
@@ -222,6 +228,7 @@ await mock.close();
 ## Testing Slash Commands & UI Side Effects
 
 pi-mock captures all `ctx.ui.notify()`, `ctx.ui.setStatus()`, and `ctx.ui.setWidget()` calls from extensions.
+Captured entries now include optional `origin` metadata (`source`, `sessionId`, `invocationId`, `hasUI`, `commandName`/`toolName`) so tests can disambiguate UI ownership.
 
 ### Notifications, Status Updates, Widgets
 
@@ -230,6 +237,38 @@ pi-mock captures all `ctx.ui.notify()`, `ctx.ui.setStatus()`, and `ctx.ui.setWid
 const result = await mock.invokeCommand("my-command", "some args");
 assert.equal(result.notifications[0].message, "Command executed");
 assert.equal(result.statusUpdates[0].key, "my-ext");
+assert.ok(Array.isArray(result.widgets));
+
+// Synthetic direct invocation with context overrides
+const synthetic = await mock.invokeTool("my-tool", { foo: "bar" }, {
+  hasUI: false,
+  sessionId: "background-session",
+  invocationId: "inv-1",
+});
+assert.equal(synthetic.widgets[0].origin?.sessionId, "background-session");
+assert.equal(synthetic.widgets[0].origin?.hasUI, false);
+```
+
+To make synthetic invocation work, register the logic you want pi-mock to call via the shared event bus:
+
+```typescript
+const runMyUiLogic = async (input, ctx) => {
+  if (ctx.hasUI) ctx.ui.setWidget("demo", ["interactive"]);
+  else ctx.ui.setStatus("demo", "background");
+};
+
+pi.events.emit("_mock:register_invocation", {
+  name: "my-tool",
+  fn: runMyUiLogic,
+});
+```
+
+Then in tests:
+
+```typescript
+const bg = await mock.invokeTool("my-tool", { mode: "bg" }, { hasUI: false, sessionId: "bg-1" });
+const ui = await mock.invokeTool("my-tool", { mode: "ui" }, { hasUI: true, sessionId: "ui-1" });
+assert.equal(ui.widgets[0].origin?.sessionId, "ui-1");
 
 // Wait for async side effects (e.g. from polling loops)
 const notif = await mock.waitForNotification(n => n.notifyType === "error", 5_000);

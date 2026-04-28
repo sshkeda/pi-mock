@@ -37,11 +37,23 @@ export interface ExtensionUIRequest extends RpcEvent {
 /** Handler for extension UI dialogs. Return the response payload. */
 export type UIHandler = (req: ExtensionUIRequest) => Record<string, unknown> | undefined;
 
+/** Optional origin metadata for captured UI side effects. */
+export interface CapturedUIOrigin {
+  source: "rpc" | "synthetic-command" | "synthetic-tool";
+  invocationId?: string;
+  sessionId?: string;
+  hasUI?: boolean;
+  commandName?: string;
+  toolName?: string;
+}
+
 /** Captured notification from ctx.ui.notify(). */
 export interface CapturedNotification {
   message: string;
   notifyType: "info" | "warning" | "error";
   timestamp: number;
+  eventIndex?: number;
+  origin?: CapturedUIOrigin;
 }
 
 /** Captured status update from ctx.ui.setStatus(). */
@@ -49,6 +61,8 @@ export interface CapturedStatusUpdate {
   key: string;
   text: string | undefined;
   timestamp: number;
+  eventIndex?: number;
+  origin?: CapturedUIOrigin;
 }
 
 /** Captured widget update from ctx.ui.setWidget(). */
@@ -57,6 +71,21 @@ export interface CapturedWidget {
   lines: string[] | undefined;
   placement?: "aboveEditor" | "belowEditor";
   timestamp: number;
+  eventIndex?: number;
+  origin?: CapturedUIOrigin;
+}
+
+/**
+ * Captured editor text operation from ctx.ui.setEditorText() / pasteToEditor().
+ * Fast mode preserves the method distinction; full mode (pi RPC) collapses
+ * both into "setEditorText" per pi's implementation.
+ */
+export interface CapturedEditorOp {
+  method: "setEditorText" | "pasteToEditor";
+  text: string;
+  timestamp: number;
+  eventIndex?: number;
+  origin?: CapturedUIOrigin;
 }
 
 export interface RpcClient {
@@ -127,6 +156,7 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
       }
 
       events.push(ev);
+      const eventIndex = events.length - 1;
 
       // Dispatch response to pending command
       if (ev.type === "response" && typeof (ev as RpcResponse).id === "string") {
@@ -149,6 +179,8 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
             message: (uiReq as any).message ?? "",
             notifyType: (uiReq as any).notifyType ?? "info",
             timestamp: Date.now(),
+            eventIndex,
+            origin: { source: "rpc" },
           };
           notifications.push(n);
           for (const l of notificationListeners) l(n);
@@ -160,6 +192,8 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
             key: (uiReq as any).statusKey ?? "",
             text: (uiReq as any).statusText,
             timestamp: Date.now(),
+            eventIndex,
+            origin: { source: "rpc" },
           };
           statusUpdates.push(s);
           for (const l of statusListeners) l(s);
@@ -171,6 +205,8 @@ export function createRpcClient(proc: ChildProcess): RpcClient {
             lines: (uiReq as any).widgetLines,
             placement: (uiReq as any).widgetPlacement,
             timestamp: Date.now(),
+            eventIndex,
+            origin: { source: "rpc" },
           };
           widgets.push(w);
           write({ type: "extension_ui_response", id: uiReq.id, cancelled: true });
