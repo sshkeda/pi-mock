@@ -29,6 +29,7 @@ import {
   loadExtensionIntoFastPi,
   type FastCaptureBag,
   type FastCaptureHooks,
+  type FastCtxDeps,
   type FastInvocationMeta,
   type FastPi,
 } from "./fast-pi.js";
@@ -64,6 +65,11 @@ export async function createFastMock(options: MockOptions): Promise<Mock> {
   // shared ctx (i.e. sharedCtx from a prior invocation) still show up in the
   // current invocation's return — matching full-mode semantics.
   const captures: FastCaptureBag = { notifications, statusUpdates, widgets, editorOps };
+
+  const ctxDeps: FastCtxDeps = {
+    sessionFilePath: options.sessionFile,
+    events: pi.events,
+  };
 
   const hooks: FastCaptureHooks = {
     onNotification(n) {
@@ -138,6 +144,9 @@ export async function createFastMock(options: MockOptions): Promise<Mock> {
     get editorOps() {
       return editorOps;
     },
+    get sentMessages() {
+      return pi.sentMessages;
+    },
     get stderr() {
       return [];
     },
@@ -204,7 +213,7 @@ export async function createFastMock(options: MockOptions): Promise<Mock> {
         throw new Error(`invokeCommand(${name}) failed: command not found`);
       }
       const meta = mkMeta("command", name, overrides);
-      const ctx = createSyntheticCtx(meta, captures, hooks);
+      const ctx = createSyntheticCtx(meta, captures, hooks, ctxDeps);
       const start = cursor();
       try {
         if (cmd) {
@@ -232,7 +241,7 @@ export async function createFastMock(options: MockOptions): Promise<Mock> {
         };
       }
       const meta = mkMeta("tool", name, overrides);
-      const ctx = createSyntheticCtx(meta, captures, hooks);
+      const ctx = createSyntheticCtx(meta, captures, hooks, ctxDeps);
       const start = cursor();
       try {
         let result: unknown;

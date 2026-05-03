@@ -80,13 +80,29 @@ export interface FastCtxUI {
   setToolsExpanded(expanded: boolean): void;
 }
 
+export interface FastSessionManager {
+  getSessionFile(): string | undefined;
+}
+
 export interface FastCtx {
   hasUI: boolean;
   ui: FastCtxUI;
+  sessionManager: FastSessionManager;
+  newSession(): Promise<{ cancelled: boolean }>;
+  isIdle(): boolean;
+}
+
+export interface CapturedMessage {
+  message: Record<string, unknown>;
+  options?: Record<string, unknown>;
+  timestamp: number;
 }
 
 export interface FastPi {
   events: FastEvents;
+  on(event: string, fn: FastEventHandler): void;
+  sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>): void;
+  readonly sentMessages: CapturedMessage[];
   registerCommand(name: string, options: FastCommandDef): void;
   registerTool(tool: FastToolDef): void;
   getAllTools(): FastToolDef[];
@@ -139,6 +155,7 @@ export function createFastPi(): FastPi {
   const tools = new Map<string, FastToolDef>();
   const completions = new Map<string, (prefix: string) => unknown>();
   const invocations = new Map<string, (input: unknown, ctx: FastCtx) => unknown | Promise<unknown>>();
+  const sentMessages: CapturedMessage[] = [];
 
   const events: FastEvents = {
     on(event, fn) {
@@ -177,6 +194,13 @@ export function createFastPi(): FastPi {
 
   return {
     events,
+    on(event: string, fn: FastEventHandler) {
+      events.on(event, fn);
+    },
+    sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>) {
+      sentMessages.push({ message, options, timestamp: Date.now() });
+    },
+    sentMessages,
     registerCommand(name, options) {
       commands.set(name, options);
     },
@@ -195,10 +219,16 @@ export function createFastPi(): FastPi {
 
 // ─── Synthetic ctx ───────────────────────────────────────────────────
 
+export interface FastCtxDeps {
+  sessionFilePath?: string;
+  events: FastEvents;
+}
+
 export function createSyntheticCtx(
   meta: FastInvocationMeta,
   bag: FastCaptureBag,
   hooks?: FastCaptureHooks,
+  deps?: FastCtxDeps,
 ): FastCtx {
   const origin: CapturedUIOrigin = {
     source: meta.kind === "tool" ? "synthetic-tool" : "synthetic-command",
@@ -305,6 +335,18 @@ export function createSyntheticCtx(
   return {
     hasUI: meta.hasUI,
     ui,
+    sessionManager: {
+      getSessionFile() {
+        return deps?.sessionFilePath;
+      },
+    },
+    async newSession() {
+      deps?.events.emit("session_start", { type: "session_start", reason: "new" });
+      return { cancelled: false };
+    },
+    isIdle() {
+      return true;
+    },
   };
 }
 

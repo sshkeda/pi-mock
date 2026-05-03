@@ -6,6 +6,7 @@ export {
   type InvocationContextOverrides, type InvocationCapture, type SyntheticInvocationResult,
   type CapturedNotification, type CapturedStatusUpdate, type CapturedWidget, type CapturedUIOrigin,
   type CapturedEditorOp,
+  type CapturedMessage,
 } from "./mock.js";
 export {
   script, always, echo,

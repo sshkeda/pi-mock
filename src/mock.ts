@@ -45,11 +45,13 @@ import {
   text,
 } from "./anthropic.js";
 import { createFastMock } from "./fast-mock.js";
+import { type CapturedMessage } from "./fast-pi.js";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
 export type { ProcessStats } from "./process-stats.js";
 export type { CapturedNotification, CapturedStatusUpdate, CapturedWidget, CapturedUIOrigin, CapturedEditorOp } from "./rpc.js";
+export type { CapturedMessage } from "./fast-pi.js";
 
 /** Slash command info returned by getCommands(). */
 export interface SlashCommandInfo {
@@ -192,6 +194,8 @@ export interface Mock {
   readonly widgets: CapturedWidget[];
   /** All captured editor text operations from ctx.ui editor helpers. */
   readonly editorOps: CapturedEditorOp[];
+  /** All captured pi.sendMessage() calls (fast mode only). */
+  readonly sentMessages: CapturedMessage[];
   /** Pi's stderr output lines. */
   readonly stderr: string[];
   /** Gateway port. */
@@ -662,6 +666,9 @@ export async function createMock(options: MockOptions): Promise<Mock> {
     },
     get editorOps() {
       return editorOps;
+    },
+    get sentMessages() {
+      return [];
     },
     stderr,
     get port() {
