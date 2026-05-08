@@ -2,7 +2,7 @@
  * E2E tests for interactive mode — drives pi's terminal UI via PTY.
  *
  * Prerequisites:
- *   - pi installed: npm install -g @mariozechner/pi-coding-agent
+ *   - pi installed: npm install -g @earendil-works/pi-coding-agent
  *   - node-pty installed: npm install --save-dev node-pty
  *
  * Tests are skipped automatically if either is missing.
