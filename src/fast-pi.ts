@@ -88,7 +88,7 @@ export interface FastCtx {
   hasUI: boolean;
   ui: FastCtxUI;
   sessionManager: FastSessionManager;
-  newSession(): Promise<{ cancelled: boolean }>;
+  newSession(options?: FastNewSessionOptions): Promise<{ cancelled: boolean }>;
   isIdle(): boolean;
 }
 
@@ -96,6 +96,17 @@ export interface CapturedMessage {
   message: Record<string, unknown>;
   options?: Record<string, unknown>;
   timestamp: number;
+}
+
+export interface FastReplacementCtx extends FastCtx {
+  sendMessage(message: Record<string, unknown>, options?: Record<string, unknown>): Promise<void>;
+  sendUserMessage(content: unknown, options?: Record<string, unknown>): Promise<void>;
+}
+
+export interface FastNewSessionOptions {
+  parentSession?: string;
+  setup?: (sessionManager: FastSessionManager) => unknown | Promise<unknown>;
+  withSession?: (ctx: FastReplacementCtx) => unknown | Promise<unknown>;
 }
 
 export interface FastPi {
@@ -222,6 +233,7 @@ export function createFastPi(): FastPi {
 export interface FastCtxDeps {
   sessionFilePath?: string;
   events: FastEvents;
+  sendMessage?: (message: Record<string, unknown>, options?: Record<string, unknown>) => void;
 }
 
 export function createSyntheticCtx(
@@ -340,8 +352,32 @@ export function createSyntheticCtx(
         return deps?.sessionFilePath;
       },
     },
-    async newSession() {
-      deps?.events.emit("session_start", { type: "session_start", reason: "new" });
+    async newSession(options?: FastNewSessionOptions) {
+      await options?.setup?.(this.sessionManager);
+      deps?.events.emit("session_start", {
+        type: "session_start",
+        reason: "new",
+        previousSessionFile: deps?.sessionFilePath,
+        parentSession: options?.parentSession,
+      });
+      if (options?.withSession) {
+        const replacementCtx = createSyntheticCtx(
+          { ...meta, invocationId: `${meta.invocationId}:replacement` },
+          bag,
+          hooks,
+          deps,
+        ) as FastReplacementCtx;
+        replacementCtx.sendMessage = async (message, messageOptions) => {
+          deps?.sendMessage?.(message, messageOptions);
+        };
+        replacementCtx.sendUserMessage = async (content, messageOptions) => {
+          deps?.sendMessage?.(
+            { role: "user", content },
+            { ...messageOptions, triggerTurn: true },
+          );
+        };
+        await options.withSession(replacementCtx);
+      }
       return { cancelled: false };
     },
     isIdle() {
@@ -366,7 +402,7 @@ async function loadViaNativeImport(extPath: string): Promise<unknown> {
 
 async function loadViaJiti(extPath: string): Promise<unknown> {
   const require = createRequire(import.meta.url);
-  const jitiPkg: unknown = require("@mariozechner/jiti");
+  const jitiPkg: unknown = require("jiti");
   if (!hasKey(jitiPkg, "createJiti") || typeof jitiPkg.createJiti !== "function") {
     throw new Error("jiti missing createJiti export");
   }

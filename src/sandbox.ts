@@ -187,7 +187,7 @@ export function spawnLocal(config: SandboxConfig): SpawnResult {
     if (err.code === "ENOENT") {
       const msg =
         `pi binary not found: "${piBinary}". ` +
-        `Install it with: npm install -g @mariozechner/pi-coding-agent` +
+        `Install it with: npm install -g @earendil-works/pi-coding-agent` +
         (piBinary === "pi" ? "" : `, or check that "${piBinary}" is on your PATH.`);
       child.emit("close", 1);
       // Attach the friendly message so waitForReady can surface it

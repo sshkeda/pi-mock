@@ -47,7 +47,6 @@
       "types": "./dist/index.d.ts"
     }
   },
-
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test --test-force-exit test/test-providers.mjs test/test-network.mjs test/test-replay.mjs test/test-cli.mjs test/test-e2e.mjs test/test-issues.mjs test/test-steer.mjs test/test-helper.mjs test/test-edge-errors.mjs test/test-ui-capture.mjs test/test-ui-ownership.mjs test/test-fast-mode.mjs",
@@ -60,7 +59,7 @@
     "prepare": "npm run build"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": ">=0.65.0",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "node-pty": ">=1.0.0"
   },
   "peerDependenciesMeta": {
@@ -72,5 +71,8 @@
     "@types/node": "^22.0.0",
     "node-pty": "^1.1.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "jiti": "2.7.0"
   }
 }

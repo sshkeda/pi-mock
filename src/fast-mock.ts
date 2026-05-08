@@ -69,6 +69,9 @@ export async function createFastMock(options: MockOptions): Promise<Mock> {
   const ctxDeps: FastCtxDeps = {
     sessionFilePath: options.sessionFile,
     events: pi.events,
+    sendMessage: (message, messageOptions) => {
+      pi.sendMessage(message, messageOptions);
+    },
   };
 
   const hooks: FastCaptureHooks = {

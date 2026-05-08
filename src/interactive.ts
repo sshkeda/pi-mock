@@ -729,7 +729,7 @@ export async function createInteractiveMock(
     throw new Error(
       `pi did not become ready within ${startupTimeout}ms.\n` +
         `Terminal output:\n${stripAnsi(outputBuf).slice(-500)}\n\n` +
-        "Ensure pi is installed: npm install -g @mariozechner/pi-coding-agent\n" +
+        "Ensure pi is installed: npm install -g @earendil-works/pi-coding-agent\n" +
         "Or adjust readyPattern / startupTimeoutMs options.",
     );
   }

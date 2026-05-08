@@ -380,7 +380,7 @@ async function waitForReady(rpc: RpcClient, proc: ChildProcess, timeoutMs: numbe
 
   throw new Error(
     `pi failed to start within ${timeoutMs}ms. Last error: ${lastError ?? "unknown"}\n` +
-    `  Ensure pi is installed: npm install -g @mariozechner/pi-coding-agent\n` +
+    `  Ensure pi is installed: npm install -g @earendil-works/pi-coding-agent\n` +
     `  Or increase timeout with startupTimeoutMs option.`,
   );
 }
