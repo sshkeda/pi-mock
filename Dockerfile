@@ -6,7 +6,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install pi globally — pinned to tested version range
-RUN npm install -g @mariozechner/pi-coding-agent@0.62
+RUN npm install -g @earendil-works/pi-coding-agent@0.62
 
 # Pre-warm: run pi --version so any first-run setup is cached in the image layer
 RUN pi --version || true

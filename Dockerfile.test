@@ -8,7 +8,7 @@ RUN apt-get update && \
 
 # Install pi globally
 ARG PI_VERSION=0.64
-RUN npm install -g @mariozechner/pi-coding-agent@${PI_VERSION}
+RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION}
 RUN pi --version || true
 
 WORKDIR /app

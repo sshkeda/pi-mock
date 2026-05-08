@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/sshkeda/pi-mock/blob/main/LICENSE)
 
-Integration testing harness for [pi](https://github.com/badlogic/pi-mono) extensions.
+Integration testing harness for [pi](https://github.com/earendil-works/pi-mono) extensions.
 
 Spins up a real `pi` process with a mock LLM API, full network control, and RPC communication. CLI-first — designed to be easy for AI agents to use.
 
@@ -21,7 +21,7 @@ With Docker sandbox mode, iptables blocks all outbound traffic except to the gat
 Requires [pi](https://github.com/mariozechner/pi-mono) installed globally:
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @earendil-works/pi-coding-agent
 ```
 
 For Docker sandbox mode, [Docker](https://docs.docker.com/get-docker/) must be installed.
@@ -720,7 +720,7 @@ replay("./session.json")           // Replay transcript as brain
 
 ### Compatibility
 
-- **Tested with pi `>=0.62.0`** — The Dockerfile pins `@mariozechner/pi-coding-agent@0.62`. Newer versions should work but aren't guaranteed. If pi's RPC protocol or event shapes change, tests may break.
+- **Tested with pi `>=0.62.0`** — The Dockerfile pins `@earendil-works/pi-coding-agent@0.62`. Newer versions should work but aren't guaranteed. If pi's RPC protocol or event shapes change, tests may break.
 - **macOS and Linux only** — Docker sandbox mode relies on iptables and `host.docker.internal`. Windows (native, not WSL2) is untested.
 
 ## License
