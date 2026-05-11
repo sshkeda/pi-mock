@@ -5,9 +5,9 @@ description: Integration testing harness for Pi extensions and Pi itself. Use wh
 
 # pi-mock
 
-Use the local pi-mock repo at `/Users/sshkeda/GitHub/pi-mock` to write deterministic integration tests for Pi extensions and Pi behavior.
+Use the local pi-mock repo at `/Users/sshkeda/gh/pi-mock` to write deterministic integration tests for Pi extensions and Pi behavior.
 
-Before non-trivial work, skim `/Users/sshkeda/GitHub/pi-mock/README.md` for the current API. If you edit pi-mock source itself, run `npm --prefix /Users/sshkeda/GitHub/pi-mock run build` before consuming `dist/`.
+Before non-trivial work, skim `/Users/sshkeda/gh/pi-mock/README.md` for the current API. If you edit pi-mock source itself, run `npm --prefix /Users/sshkeda/gh/pi-mock run build` before consuming `dist/`.
 
 ## When to use
 
@@ -135,3 +135,13 @@ Then inspect `mock.requests` or `await mock.waitForRequest(...)`.
 - Keep timeouts explicit (`20_000` startup, `30_000` interaction is typical).
 - Close mocks in `finally`; remove temporary directories.
 - Run the target repo's test script after editing, e.g. `npm run test:interactive`.
+
+## Race/chaos testing checklist
+
+When testing concurrency, file locks, leases, session coordination, or crash recovery:
+
+- Model intermediate states explicitly, not just normal completed states. Example: for a `mkdir(lockDir)` + `write(owner.json)` protocol, add a regression for a fresh ownerless lock directory.
+- Add deterministic tests for every protocol state: no lock, fresh lock, stale lock, corrupt owner file, missing owner file, owner process killed, active lease not expired, expired lease, and conflicting expected head/version.
+- Use real spawned processes where process death matters; `createMock().close()` is graceful and may not reproduce `SIGKILL` behavior.
+- After pi-mock tests pass, run one installed-extension dogfood command with the real `pi` CLI for high-risk interprocess races. pi-mock is the regression harness; real CLI dogfood is a smoke test for scheduling/startup gaps the test did not model yet.
+- If dogfood finds a race, first reduce it to a deterministic pi-mock regression, then fix the product code.
