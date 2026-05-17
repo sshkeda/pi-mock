@@ -71,6 +71,8 @@ export {
   createInteractiveMock,
   type InteractiveMock,
   type InteractiveMockOptions,
+  type TerminalScreenshot,
+  type TerminalScreenshotOptions,
   type KeyName,
 } from "./interactive.js";
 export {

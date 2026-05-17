@@ -115,6 +115,8 @@ curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/events
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/requests
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/proxy-log
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/status
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/screenshot        # JSON with SVG + data URL
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/screenshot?raw=1 > screen.svg
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/network  -d '{"rules": [{"match": "npmjs.org"}], "default": "block"}'
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercept -d '{"host": "api.example.com", "body": "{\"ok\":true}"}'
 curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/intercepts
@@ -278,6 +280,50 @@ const status = await mock.waitForStatusUpdate(s => s.key === "health", 5_000);
 assert.ok(mock.notifications.length > 0);
 assert.ok(mock.statusUpdates.length > 0);
 assert.ok(mock.widgets.length > 0);
+```
+
+## Interactive terminal screenshots
+
+`createInteractiveMock()` captures terminal output and can now render the currently visible terminal as an SVG artifact. Screenshot rendering replays the raw ANSI stream through `@xterm/headless`, so cursor positioning, overwritten lines, alternate-screen output, and the current terminal size are reflected in the image.
+
+Install the optional peer dependencies in test projects that use interactive mode and screenshots:
+
+```bash
+npm install --save-dev node-pty @xterm/headless
+```
+
+Programmatic usage:
+
+```typescript
+import { createInteractiveMock, script, text } from "pi-mock";
+
+const mock = await createInteractiveMock({
+  brain: script(text("screenshot proof ✓")),
+  terminal: { cols: 100, rows: 30 },
+});
+
+try {
+  mock.submit("show proof");
+  await mock.waitForOutput("screenshot proof");
+
+  const lines = await mock.visibleScreen();       // text-only visible screen
+  const shot = await mock.screenshot({
+    title: "regression proof",
+    path: "./artifacts/screen.svg",
+  });
+
+  console.log(lines.join("\n"));
+  console.log(shot.dataUrl);                      // embeddable data:image/svg+xml;base64,...
+} finally {
+  await mock.close();
+}
+```
+
+Management API usage for a running interactive mock:
+
+```bash
+curl -H "x-pi-mock-token: $TOKEN" localhost:$PORT/_/screenshot
+curl -H "x-pi-mock-token: $TOKEN" 'localhost:$PORT/_/screenshot?raw=1' > screen.svg
 ```
 
 ### Argument Completions

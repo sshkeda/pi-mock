@@ -59,16 +59,22 @@
     "prepare": "npm run build"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "0.74.0",
+    "@earendil-works/pi-coding-agent": "0.75.0",
+    "@xterm/headless": ">=5.0.0",
     "node-pty": ">=1.0.0"
   },
   "peerDependenciesMeta": {
     "node-pty": {
       "optional": true
+    },
+    "@xterm/headless": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "@sinclair/typebox": "^0.34.49",
     "@types/node": "^22.0.0",
+    "@xterm/headless": "^5.5.0",
     "node-pty": "^1.1.0",
     "typescript": "^5.0.0"
   },

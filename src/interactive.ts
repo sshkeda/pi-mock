@@ -96,15 +96,75 @@ const KEY_MAP: Record<KeyName, string> = {
 /** Widened lookup for untyped HTTP API input. */
 const KEY_LOOKUP = new Map(Object.entries(KEY_MAP));
 
-// Structural type describing the minimal shape of @xterm/headless we rely on —
+// Structural types describing the minimal shape of @xterm/headless we rely on —
 // avoids a hard TS dependency on a package that callers opt into.
+interface TerminalCellLike {
+  getChars(): string;
+  getWidth(): number;
+  getFgColorMode?(): number;
+  getFgColor?(): number;
+  getBgColorMode?(): number;
+  getBgColor?(): number;
+  isBold?(): boolean | number;
+  isDim?(): boolean | number;
+  isItalic?(): boolean | number;
+  isUnderline?(): boolean | number;
+  isInverse?(): boolean | number;
+  isStrikethrough?(): boolean | number;
+}
+
+interface TerminalLineLike {
+  translateToString(trimRight?: boolean): string;
+  getCell?(x: number): TerminalCellLike | undefined;
+}
+
 interface TerminalLike {
   write(data: string, cb?: () => void): void;
   buffer: {
     active: {
-      getLine(y: number): { translateToString(trimRight?: boolean): string } | undefined;
+      getLine(y: number): TerminalLineLike | undefined;
     };
   };
+}
+
+export interface TerminalScreenshotOptions {
+  /** Currently only SVG is supported. SVG is dependency-free and works in browsers, CI artifacts, and Markdown. */
+  format?: "svg";
+  /** Optional title embedded in the SVG metadata. */
+  title?: string;
+  /** Optional output path. If provided, screenshot() also writes the SVG there. */
+  path?: string;
+  /** CSS background color. Default: near-black terminal background. */
+  background?: string;
+  /** CSS foreground color. Default: light terminal text. */
+  foreground?: string;
+  /** CSS font-family. Default: native monospace terminal stack. */
+  fontFamily?: string;
+  /** Font size in px. Default: 13. */
+  fontSize?: number;
+  /** Approximate monospace cell width in px. Default: 7.8. */
+  cellWidth?: number;
+  /** Line height / cell height in px. Default: 18. */
+  cellHeight?: number;
+  /** Inner terminal padding in px. Default: 10. */
+  padding?: number;
+  /** Draw a subtle rounded terminal frame. Default: true. */
+  chrome?: boolean;
+  /** Border color for chrome. Default: #30363d. */
+  borderColor?: string;
+}
+
+export interface TerminalScreenshot {
+  format: "svg";
+  contentType: "image/svg+xml";
+  content: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  cols: number;
+  rows: number;
+  lines: string[];
+  path?: string;
 }
 
 // ─── Options ────────────────────────────────────────────────────────
@@ -181,6 +241,15 @@ export interface InteractiveMock {
    * history. Requires `@xterm/headless` as a peer dep.
    */
   visibleScreen(): Promise<string[]>;
+  /**
+   * Capture the currently visible terminal as an SVG screenshot.
+   * Uses the same headless-xterm replay as visibleScreen(), so cursor movement,
+   * line rewrites, alternate screen output, and terminal dimensions are reflected
+   * in the image. Pass { path } to write the SVG artifact to disk.
+   */
+  screenshot(options?: TerminalScreenshotOptions): Promise<TerminalScreenshot>;
+  /** Convenience wrapper around screenshot({ path }). */
+  saveScreenshot(path: string, options?: Omit<TerminalScreenshotOptions, "path">): Promise<TerminalScreenshot>;
 
   /** Replace the brain mid-test. */
   setBrain(brain: Brain): void;
@@ -298,6 +367,242 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+// ─── Headless terminal replay / screenshots ─────────────────────────
+
+async function loadHeadlessTerminal(): Promise<new (opts: Record<string, unknown>) => TerminalLike> {
+  let headless: unknown;
+  try {
+    // Resolve optional peers from the caller's cwd first. This matters when
+    // pi-mock is consumed via `file:../pi-mock`: Node resolves a bare dynamic
+    // import from pi-mock's real path, not the consumer's node_modules.
+    const req = createRequire(join(process.cwd(), "package.json"));
+    const resolved = req.resolve("@xterm/headless");
+    headless = await import(pathToFileURL(resolved).href);
+  } catch {
+    try {
+      const specifier = "@xterm/headless";
+      headless = await import(specifier);
+    } catch {
+      throw new Error(
+        "Terminal screen rendering requires the '@xterm/headless' package.\n" +
+          "Install it with: npm install --save-dev @xterm/headless",
+      );
+    }
+  }
+  if (!headless || typeof headless !== "object") {
+    throw new Error("@xterm/headless did not export a module object");
+  }
+  const mod = headless as Record<string, unknown>;
+  const fromDefault = mod.default && typeof mod.default === "object" ? (mod.default as Record<string, unknown>) : undefined;
+  const TerminalCtor = (mod.Terminal ?? fromDefault?.Terminal) as undefined | (new (opts: Record<string, unknown>) => TerminalLike);
+  if (typeof TerminalCtor !== "function") throw new Error("@xterm/headless did not export a Terminal class");
+  return TerminalCtor;
+}
+
+async function terminalFromRaw(raw: string, cols: number, rows: number): Promise<TerminalLike> {
+  const TerminalCtor = await loadHeadlessTerminal();
+  const term = new TerminalCtor({ cols, rows, allowProposedApi: true });
+  await new Promise<void>((resolve) => term.write(raw, resolve));
+  return term;
+}
+
+async function visibleScreenFromRaw(raw: string, cols: number, rows: number): Promise<string[]> {
+  const term = await terminalFromRaw(raw, cols, rows);
+  const lines: string[] = [];
+  for (let i = 0; i < rows; i++) {
+    lines.push(term.buffer.active.getLine(i)?.translateToString(true) ?? "");
+  }
+  return lines;
+}
+
+interface StyledRun {
+  start: number;
+  cols: number;
+  text: string;
+  fg: string;
+  bg?: string;
+  bold: boolean;
+  dim: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+}
+
+interface TerminalSnapshot {
+  lines: string[];
+  runs: StyledRun[][];
+}
+
+const COLOR_MODE_DEFAULT = 0;
+const COLOR_MODE_16 = 1 << 24;
+const COLOR_MODE_256 = 2 << 24;
+const COLOR_MODE_RGB = 3 << 24;
+
+const ANSI_16 = [
+  "#000000", "#cd3131", "#0dbc79", "#e5e510",
+  "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
+  "#666666", "#f14c4c", "#23d18b", "#f5f543",
+  "#3b8eea", "#d670d6", "#29b8db", "#e5e5e5",
+];
+
+function color256(index: number): string {
+  if (index >= 0 && index < ANSI_16.length) return ANSI_16[index];
+  if (index >= 16 && index <= 231) {
+    const n = index - 16;
+    const r = Math.floor(n / 36);
+    const g = Math.floor((n % 36) / 6);
+    const b = n % 6;
+    const level = (v: number) => (v === 0 ? 0 : 55 + v * 40);
+    return rgbToHex(level(r), level(g), level(b));
+  }
+  if (index >= 232 && index <= 255) {
+    const v = 8 + (index - 232) * 10;
+    return rgbToHex(v, v, v);
+  }
+  return ANSI_16[7];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function xtermColor(mode: number | undefined, value: number | undefined, fallback: string): string {
+  const colorMode = mode ?? COLOR_MODE_DEFAULT;
+  const colorValue = value ?? -1;
+  if (colorMode === COLOR_MODE_16 || colorMode === COLOR_MODE_256) return color256(colorValue);
+  if (colorMode === COLOR_MODE_RGB) {
+    return rgbToHex((colorValue >> 16) & 255, (colorValue >> 8) & 255, colorValue & 255);
+  }
+  return fallback;
+}
+
+async function terminalSnapshotFromRaw(raw: string, cols: number, rows: number, options: TerminalScreenshotOptions = {}): Promise<TerminalSnapshot> {
+  const term = await terminalFromRaw(raw, cols, rows);
+  const foreground = options.foreground ?? "#d8d8d8";
+  const background = options.background ?? "#101014";
+  const lines: string[] = [];
+  const allRuns: StyledRun[][] = [];
+
+  for (let y = 0; y < rows; y++) {
+    const line = term.buffer.active.getLine(y);
+    lines.push(line?.translateToString(true) ?? "");
+    const runs: StyledRun[] = [];
+    let current: StyledRun | undefined;
+
+    for (let x = 0; x < cols; x++) {
+      const cell = line?.getCell?.(x);
+      const width = cell?.getWidth() ?? 1;
+      if (width <= 0) continue;
+      let text = cell?.getChars() || " ";
+      if (width > 1 && text === " ") text = " ".repeat(width);
+      let fg = xtermColor(cell?.getFgColorMode?.(), cell?.getFgColor?.(), foreground);
+      let bg = xtermColor(cell?.getBgColorMode?.(), cell?.getBgColor?.(), background);
+      const hasDefaultBg = (cell?.getBgColorMode?.() ?? COLOR_MODE_DEFAULT) === COLOR_MODE_DEFAULT;
+      const inverse = Boolean(cell?.isInverse?.());
+      if (inverse) {
+        const before = fg;
+        fg = hasDefaultBg ? background : bg;
+        bg = before;
+      }
+      const style = {
+        fg,
+        bg: hasDefaultBg && !inverse ? undefined : bg,
+        bold: Boolean(cell?.isBold?.()),
+        dim: Boolean(cell?.isDim?.()),
+        italic: Boolean(cell?.isItalic?.()),
+        underline: Boolean(cell?.isUnderline?.()),
+        strike: Boolean(cell?.isStrikethrough?.()),
+      };
+      const same = Boolean(current) && current!.fg === style.fg && current!.bg === style.bg && current!.bold === style.bold &&
+        current!.dim === style.dim && current!.italic === style.italic && current!.underline === style.underline && current!.strike === style.strike;
+      if (same && current) {
+        current.cols += width;
+        current.text += text;
+      } else {
+        current = { start: x, cols: width, text, ...style };
+        runs.push(current);
+      }
+    }
+    allRuns.push(runs);
+  }
+  return { lines, runs: allRuns };
+}
+
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeXmlAttr(value: string): string {
+  return escapeXmlText(value).replace(/"/g, "&quot;");
+}
+
+function renderTerminalSvg(snapshot: TerminalSnapshot, cols: number, rows: number, options: TerminalScreenshotOptions = {}): TerminalScreenshot {
+  const padding = options.padding ?? 10;
+  const fontSize = options.fontSize ?? 13;
+  const cellWidth = options.cellWidth ?? 7.8;
+  const cellHeight = options.cellHeight ?? 18;
+  const chrome = options.chrome ?? true;
+  const width = Math.ceil(padding * 2 + cols * cellWidth);
+  const height = Math.ceil(padding * 2 + rows * cellHeight);
+  const background = options.background ?? "#101014";
+  const foreground = options.foreground ?? "#d8d8d8";
+  const borderColor = options.borderColor ?? "#30363d";
+  const fontFamily = options.fontFamily ?? "Menlo, Monaco, 'SF Mono', 'Cascadia Mono', 'DejaVu Sans Mono', Consolas, monospace";
+  const title = options.title ?? "pi-mock terminal screenshot";
+  const bgRects: string[] = [];
+  const textRuns: string[] = [];
+
+  for (let y = 0; y < rows; y++) {
+    for (const run of snapshot.runs[y] ?? []) {
+      const x = padding + run.start * cellWidth;
+      const top = padding + y * cellHeight;
+      if (run.bg) {
+        bgRects.push(`<rect x="${x.toFixed(2)}" y="${top.toFixed(2)}" width="${(run.cols * cellWidth).toFixed(2)}" height="${cellHeight}" fill="${escapeXmlAttr(run.bg)}"/>`);
+      }
+      if (run.text.trim().length === 0) continue;
+      const yBase = padding + fontSize + y * cellHeight;
+      const attrs = [
+        `x="${x.toFixed(2)}"`,
+        `y="${yBase.toFixed(2)}"`,
+        `fill="${escapeXmlAttr(run.fg || foreground)}"`,
+      ];
+      if (run.bold) attrs.push('font-weight="700"');
+      if (run.italic) attrs.push('font-style="italic"');
+      const decorations = [run.underline ? "underline" : "", run.strike ? "line-through" : ""].filter(Boolean).join(" ");
+      if (decorations) attrs.push(`text-decoration="${decorations}"`);
+      if (run.dim) attrs.push('opacity="0.65"');
+      textRuns.push(`<text ${attrs.join(" ")}>${escapeXmlText(run.text)}</text>`);
+    }
+  }
+
+  const frame = chrome
+    ? `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" fill="${escapeXmlAttr(background)}" stroke="${escapeXmlAttr(borderColor)}" rx="12" ry="12"/>`
+    : `<rect width="100%" height="100%" fill="${escapeXmlAttr(background)}"/>`;
+  const clipId = `screen-${Math.random().toString(36).slice(2)}`;
+  const content = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXmlAttr(title)}">\n` +
+    `<title>${escapeXmlText(title)}</title>\n` +
+    `<defs><clipPath id="${clipId}"><rect x="0" y="0" width="${width}" height="${height}" rx="12" ry="12"/></clipPath></defs>\n` +
+    `<g clip-path="url(#${clipId})">\n${frame}\n${bgRects.join("\n")}\n` +
+    `<g xml:space="preserve" font-family="${escapeXmlAttr(fontFamily)}" font-size="${fontSize}" fill="${escapeXmlAttr(foreground)}">\n${textRuns.join("\n")}\n</g>\n</g>\n` +
+    `</svg>\n`;
+  return {
+    format: "svg",
+    contentType: "image/svg+xml",
+    content,
+    dataUrl: `data:image/svg+xml;base64,${Buffer.from(content).toString("base64")}`,
+    width,
+    height,
+    cols,
+    rows,
+    lines: snapshot.lines,
+    path: options.path,
+  };
+}
+
 // ─── Dynamic node-pty loader ────────────────────────────────────────
 
 /**
@@ -356,8 +661,8 @@ export async function createInteractiveMock(
 
   let closed = false;
   let requestCursor = 0;
-  const cols = options.terminal?.cols ?? 120;
-  const rows = options.terminal?.rows ?? 40;
+  let cols = options.terminal?.cols ?? 120;
+  let rows = options.terminal?.rows ?? 40;
   const mgmtToken = randomUUID();
 
   // Mutable output buffer — shared between PTY listener, public API, and management handler
@@ -565,9 +870,29 @@ export async function createInteractiveMock(
           res.end(JSON.stringify({ error: "cols and rows must be numbers" }));
           return;
         }
+        cols = parsed.cols;
+        rows = parsed.rows;
         pty.resize(parsed.cols, parsed.rows);
         res.writeHead(200);
         res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      // GET /_/screenshot — current visible terminal as SVG
+      if (req.method === "GET" && path === "/_/screenshot") {
+        const screenshotOptions = {
+          title: url.searchParams.get("title") ?? undefined,
+        } satisfies TerminalScreenshotOptions;
+        const snapshot = await terminalSnapshotFromRaw(outputBuf, cols, rows, screenshotOptions);
+        const screenshot = renderTerminalSvg(snapshot, cols, rows, screenshotOptions);
+        if (url.searchParams.get("raw") === "1") {
+          res.setHeader("Content-Type", screenshot.contentType);
+          res.writeHead(200);
+          res.end(screenshot.content);
+        } else {
+          res.writeHead(200);
+          res.end(JSON.stringify(screenshot));
+        }
         return;
       }
 
@@ -595,6 +920,7 @@ export async function createInteractiveMock(
             requests: gw.requests.length,
             proxyHits: gw.proxyLog.length,
             outputLength: outputBuf.length,
+            terminal: { cols, rows },
             exited,
           }),
         );
@@ -784,43 +1110,27 @@ export async function createInteractiveMock(
     },
 
     resize(c, r) {
+      cols = c;
+      rows = r;
       pty.resize(c, r);
     },
 
     async visibleScreen() {
-      let headless: unknown;
-      try {
-        // Resolve optional peers from the caller's cwd first. This matters when
-        // pi-mock is consumed via `file:../pi-mock`: Node resolves a bare dynamic
-        // import from pi-mock's real path, not the consumer's node_modules.
-        const req = createRequire(join(process.cwd(), "package.json"));
-        const resolved = req.resolve("@xterm/headless");
-        headless = await import(pathToFileURL(resolved).href);
-      } catch {
-        try {
-          // @ts-expect-error — optional peer dep; typed structurally via TerminalLike below.
-          headless = await import("@xterm/headless");
-        } catch {
-          throw new Error(
-            "visibleScreen() requires the '@xterm/headless' peer dependency.\n" +
-              "Install it with: npm install --save-dev @xterm/headless",
-          );
-        }
+      return visibleScreenFromRaw(outputBuf, cols, rows);
+    },
+
+    async screenshot(options = {}) {
+      if (options.format && options.format !== "svg") {
+        throw new Error(`Unsupported screenshot format: ${options.format}. Only "svg" is currently supported.`);
       }
-      if (!headless || typeof headless !== "object") {
-        throw new Error("@xterm/headless did not export a module object");
-      }
-      const mod = headless as Record<string, unknown>;
-      const fromDefault = mod.default && typeof mod.default === "object" ? (mod.default as Record<string, unknown>) : undefined;
-      const TerminalCtor = (mod.Terminal ?? fromDefault?.Terminal) as undefined | (new (opts: Record<string, unknown>) => TerminalLike);
-      if (typeof TerminalCtor !== "function") throw new Error("@xterm/headless did not export a Terminal class");
-      const term = new TerminalCtor({ cols, rows, allowProposedApi: true });
-      await new Promise<void>((resolve) => term.write(outputBuf, resolve));
-      const lines: string[] = [];
-      for (let i = 0; i < rows; i++) {
-        lines.push(term.buffer.active.getLine(i)?.translateToString(true) ?? "");
-      }
-      return lines;
+      const snapshot = await terminalSnapshotFromRaw(outputBuf, cols, rows, options);
+      const shot = renderTerminalSvg(snapshot, cols, rows, options);
+      if (options.path) writeFileSync(options.path, shot.content);
+      return shot;
+    },
+
+    async saveScreenshot(path, options = {}) {
+      return mock.screenshot({ ...options, path });
     },
 
     setBrain(b) {

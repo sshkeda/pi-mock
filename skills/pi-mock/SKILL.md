@@ -83,6 +83,7 @@ Common interactive helpers:
 - `await mock.waitForOutput("text" | /regex/, timeoutMs)` — wait for terminal output.
 - `mock.clearOutput()` — reset captured output between phases.
 - `await mock.visibleScreen()` — assert visible terminal state when scrollback is misleading.
+- `await mock.screenshot({ path: "./artifacts/screen.svg" })` — save the currently visible terminal as an SVG artifact; requires `@xterm/headless`.
 - Always `await mock.close()` in `finally`.
 
 ## Non-interactive extension tests
@@ -129,12 +130,66 @@ Then inspect `mock.requests` or `await mock.waitForRequest(...)`.
 
 ## Best practices
 
-- Prefer exact deterministic signals: output text, captured side effects, events, requests, process exit, and proxy logs.
+- Treat pi-mock as an end-to-end Pi product harness, not a narrow request-shape checker. Use it to test complete user experience flows: what the user types, what the TUI shows, what tools run, what follow-up turns happen, what context the model receives, and what cleanup occurs.
+- Start from the product invariant and user-visible story. Example: “a slow tool should feel like bash: wait briefly, move to background, show pending, return control, then resume the agent with the result.” Then assert every observable step in that story.
+- Test the behavior the code depends on, not just intended happy-path usage. If a model could pass a surprising flag, malformed args, repeated tool calls, stale IDs, or racey timing, encode that as a pi-mock regression.
+- Cover both fast and slow paths. For auto-background behavior, test: fast completes inline with no pending UI; slow promotes after threshold; background result resumes the conversation; errors clean up; cancellation/close does not leave stale UI.
+- Model edge cases explicitly: success, failure, timeout, retry, duplicate completion, stale follow-up, no-op update, user sends a new message while a job is pending, extension reload, and process exit.
+- Use deterministic event logs when ordering matters. Temporary test extensions can write lifecycle events to a temp file, e.g. `tool:start`, `pending:start`, `message:queued`, `provider:next-turn`, `pending:finish`. Assert ordering instead of relying on sleep guesses.
+- Use dynamic `brain(req)` functions to simulate realistic model behavior across turns. The brain can first call a tool, later acknowledge a follow-up, later refuse, later call another tool, etc. This lets tests cover the whole agent loop, not just one API call.
+- Inspect provider requests when relevant, but keep it as one evidence source among many. Provider payload inspection is useful for proving what the model was asked to react to; it is not the point of the test by itself.
+- Assert UI and context together when possible: terminal output, pending widgets, custom messages, tool results, model follow-up requests, and final assistant text should all line up with the intended UX.
+- Prefer temporary throwaway extensions for high-value regressions. A test can generate a tiny extension in `mkdtempSync(...)` that instruments exactly the lifecycle under test without polluting product code.
 - For TUI crash regressions, assert the expected UI renders and assert known crash text is absent.
 - Use `cwd: mkdtempSync(...)` for installed-extension realism when module roots matter.
-- Keep timeouts explicit (`20_000` startup, `30_000` interaction is typical).
+- Keep timeouts explicit (`20_000` startup, `30_000` interaction is typical). For auto-background behavior, expose a test-only threshold env/option so tests use e.g. 100ms instead of waiting 30s.
 - Close mocks in `finally`; remove temporary directories.
 - Run the target repo's test script after editing, e.g. `npm run test:interactive`.
+
+## High-power pattern: full integration lifecycle tests
+
+Use this when testing background jobs, steer/follow-up messages, MCP/tool result injection, pending UI, custom tools, slash commands, provider handoff, or anything where correctness is a sequence of events rather than one function return.
+
+Template shape:
+
+1. Create a temp cwd with a tiny instrumented extension.
+2. Extension logs important lifecycle events to a temp file.
+3. `brain(req)` behaves like a mini model: first calls the tool/command path, later reacts to follow-up context, later emits final text.
+4. The test drives Pi like a user with `mock.submit(...)` / keys.
+5. Assert user-visible output and internal ordering.
+
+```js
+const mock = await createInteractiveMock({
+  extensions: [extensionPath],
+  brain: (req) => {
+    // Use req as evidence about what the model sees and decide the next model action.
+    // Example flow: first request -> toolCall(...); later request -> text("saw result").
+  },
+  cwd: tempDir,
+  startupTimeoutMs: 20_000,
+  terminal: { cols: 100, rows: 30 },
+});
+
+try {
+  mock.submit("run the user scenario");
+  await mock.waitForOutput("expected user-visible state", 30_000);
+  await mock.waitForOutput("expected final model response", 30_000);
+
+  const events = readFileSync(eventsPath, "utf8").trim().split("\n");
+  assertOrdering(events, [
+    "tool:start",
+    "pending:start",
+    "message:queued-or-observed",
+    "model:reacted",
+    "pending:finish",
+  ]);
+} finally {
+  await mock.close();
+  rmSync(tempDir, { recursive: true, force: true });
+}
+```
+
+The goal is to prove the whole Pi experience works: user input, tool lifecycle, UI state, model turns, injected context, cleanup, and final response. Use provider request inspection when it answers a real UX question, but do not reduce pi-mock to string matching provider payloads.
 
 ## Race/chaos testing checklist
 

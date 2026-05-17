@@ -10,11 +10,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ─── Prerequisite check ─────────────────────────────────────────────
 
 let createInteractiveMock, text, script, bash;
 let skipReason = "";
+let screenshotSkipReason = "";
 
 try {
   const pty = await import("node-pty");
@@ -42,6 +46,13 @@ if (!skipReason) {
   } catch (err) {
     skipReason = `Failed to import pi-mock: ${err.message}`;
   }
+}
+
+try {
+  const specifier = "@xterm/headless";
+  await import(specifier);
+} catch {
+  screenshotSkipReason = "@xterm/headless not installed (npm install --save-dev @xterm/headless)";
 }
 
 // ─── HTTP client for management API ─────────────────────────────────
@@ -356,6 +367,9 @@ test("interactive: /_/resize changes terminal dimensions", { skip: skipReason ||
     const { status } = await mgmt(mock.port, "POST", "/_/resize", { cols: 80, rows: 24 }, mock.token);
     assert.equal(status, 200);
 
+    const statusRes = await mgmt(mock.port, "GET", "/_/status", undefined, mock.token);
+    assert.deepEqual(statusRes.data.terminal, { cols: 80, rows: 24 });
+
     // Bad input
     const { status: badStatus } = await mgmt(mock.port, "POST", "/_/resize", { cols: "big" }, mock.token);
     assert.equal(badStatus, 400);
@@ -365,7 +379,53 @@ test("interactive: /_/resize changes terminal dimensions", { skip: skipReason ||
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// 13. Brain switching mid-session
+// 13. Screenshot capture
+// ═══════════════════════════════════════════════════════════════════
+test("interactive: screenshot captures visible terminal as SVG", { skip: skipReason || screenshotSkipReason || false }, async () => {
+  const mock = await createInteractiveMock({
+    brain: script(text("screenshot proof ✓")),
+    startupTimeoutMs: 15_000,
+    terminal: { cols: 90, rows: 26 },
+  });
+
+  try {
+    mock.submit("render screenshot proof");
+    await mock.waitForOutput("screenshot proof", TIMEOUT);
+
+    const shot = await mock.screenshot({ title: "pi-mock screenshot test" });
+    assert.equal(shot.format, "svg");
+    assert.equal(shot.contentType, "image/svg+xml");
+    assert.equal(shot.cols, 90);
+    assert.equal(shot.rows, 26);
+    assert.ok(shot.content.startsWith("<?xml"));
+    assert.ok(shot.content.includes("screenshot proof"));
+    assert.ok(shot.dataUrl.startsWith("data:image/svg+xml;base64,"));
+
+    const tmp = mkdtempSync(join(tmpdir(), "pi-mock-screenshot-"));
+    try {
+      const file = join(tmp, "screen.svg");
+      const saved = await mock.saveScreenshot(file, { title: "saved screenshot" });
+      assert.equal(saved.path, file);
+      assert.ok(readFileSync(file, "utf8").includes("screenshot proof"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+
+    const jsonRes = await mgmt(mock.port, "GET", "/_/screenshot", undefined, mock.token);
+    assert.equal(jsonRes.status, 200);
+    assert.equal(jsonRes.data.format, "svg");
+    assert.ok(jsonRes.data.content.includes("screenshot proof"));
+
+    const rawRes = await mgmt(mock.port, "GET", "/_/screenshot?raw=1", undefined, mock.token);
+    assert.equal(rawRes.status, 200);
+    assert.ok(String(rawRes.data).includes("<svg"));
+  } finally {
+    await mock.close();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// 14. Brain switching mid-session
 // ═══════════════════════════════════════════════════════════════════
 test("interactive: setBrain switches brain mid-session", { skip: skipReason || false }, async () => {
   let brainCallCount = 0;
@@ -401,7 +461,7 @@ test("interactive: setBrain switches brain mid-session", { skip: skipReason || f
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// 14. Programmatic API — clearOutput resets buffer
+// 15. Programmatic API — clearOutput resets buffer
 // ═══════════════════════════════════════════════════════════════════
 test("interactive: clearOutput resets programmatic output", { skip: skipReason || false }, async () => {
   const mock = await createInteractiveMock({
@@ -423,7 +483,7 @@ test("interactive: clearOutput resets programmatic output", { skip: skipReason |
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// 15. Management API — /_/stop
+// 16. Management API — /_/stop
 // ═══════════════════════════════════════════════════════════════════
 test("interactive: /_/stop shuts down cleanly", { skip: skipReason || false }, async () => {
   const mock = await createInteractiveMock({
