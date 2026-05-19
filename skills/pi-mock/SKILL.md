@@ -80,6 +80,7 @@ Common interactive helpers:
 - `mock.submit("/cmd args")` — type command and press Enter.
 - `mock.type("raw text")` — type without Enter.
 - `mock.sendKey("down" | "up" | "enter" | "escape" | ...)` — send named key.
+- For terminal-control regressions, test both semantic helpers and raw terminal sequences. `mock.sendKey("escape")` covers the legacy raw ESC path (`\x1b`), but real terminals may emit enhanced keyboard protocol forms such as `\x1b[27u`. Use `mock.type("\x1b[27u")` or another exact captured sequence when debugging Escape/arrow/modifier behavior.
 - `await mock.waitForOutput("text" | /regex/, timeoutMs)` — wait for terminal output.
 - `mock.clearOutput()` — reset captured output between phases.
 - `await mock.visibleScreen()` — assert visible terminal state when scrollback is misleading.
@@ -133,6 +134,7 @@ Then inspect `mock.requests` or `await mock.waitForRequest(...)`.
 - Treat pi-mock as an end-to-end Pi product harness, not a narrow request-shape checker. Use it to test complete user experience flows: what the user types, what the TUI shows, what tools run, what follow-up turns happen, what context the model receives, and what cleanup occurs.
 - Start from the product invariant and user-visible story. Example: “a slow tool should feel like bash: wait briefly, move to background, show pending, return control, then resume the agent with the result.” Then assert every observable step in that story.
 - Test the behavior the code depends on, not just intended happy-path usage. If a model could pass a surprising flag, malformed args, repeated tool calls, stale IDs, or racey timing, encode that as a pi-mock regression.
+- For keyboard or TUI control bugs, do not rely only on named-key helpers. Reproduce the exact bytes seen in the live terminal when possible, especially for Kitty/enhanced keyboard protocol, bracketed paste, Alt/meta chords, function keys, arrows, and Escape. Product code should usually use Pi/TUI key parsing such as `matchesKey(data, Key.escape)` rather than checking a single raw sequence.
 - Cover both fast and slow paths. For auto-background behavior, test: fast completes inline with no pending UI; slow promotes after threshold; background result resumes the conversation; errors clean up; cancellation/close does not leave stale UI.
 - Model edge cases explicitly: success, failure, timeout, retry, duplicate completion, stale follow-up, no-op update, user sends a new message while a job is pending, extension reload, and process exit.
 - Use deterministic event logs when ordering matters. Temporary test extensions can write lifecycle events to a temp file, e.g. `tool:start`, `pending:start`, `message:queued`, `provider:next-turn`, `pending:finish`. Assert ordering instead of relying on sleep guesses.
@@ -200,3 +202,16 @@ When testing concurrency, file locks, leases, session coordination, or crash rec
 - Use real spawned processes where process death matters; `createMock().close()` is graceful and may not reproduce `SIGKILL` behavior.
 - After pi-mock tests pass, run one installed-extension dogfood command with the real `pi` CLI for high-risk interprocess races. pi-mock is the regression harness; real CLI dogfood is a smoke test for scheduling/startup gaps the test did not model yet.
 - If dogfood finds a race, first reduce it to a deterministic pi-mock regression, then fix the product code.
+
+## Pi sync/TUI regression checklist
+
+When testing `pi-sync`, lanes, native replay, session trees, or any multi-terminal Pi UI, do not stop at provider-call assertions. Add pi-mock tests for the user-visible contract:
+
+- Terminal equivalence: attached terminals on the same lane should settle to the same visible screen after completed turns, streamed turns, and aborts.
+- Rendered cardinality: assert important visible strings appear exactly once when duplicates are the bug class, especially user prompts, assistant responses, `Operation aborted`, `Working for`, pending rows, and status-line lane/session labels.
+- Late join: start a turn in one terminal, attach a second terminal while the host is active, and assert the second terminal hydrates the active prompt/stream without duplicate persisted messages.
+- Lane movement: switch or create a lane while another lane has active work, then assert stale frames from the old lane do not render in the moved terminal and side-lane prompts/responses do not mirror into main.
+- Session tree movement: navigate to a previous leaf and send from that point. Assert the intended sync lane/head is used, queued peer input does not start a competing model call, and status-line identity changes are deterministic.
+- Abort bytes: test semantic `sendKey("escape")` and any captured enhanced terminal byte sequence such as `\x1b[27u` when Escape behavior is involved.
+- Disconnect lifecycle: with real spawned host/processes, cover one-client-detaches, last-client-detaches, active prompt abort, queued prompt clearing, idle shutdown, and no orphan background work.
+- Installed smoke: after deterministic pi-mock coverage passes, run at least one real installed `pi` smoke for high-risk sync changes. If it fails, reduce the failure back into pi-mock before fixing.
