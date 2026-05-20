@@ -47,8 +47,14 @@ export interface HttpErrorBlock {
   bypassSdkRetry?: boolean;
 }
 
+export interface StreamTextBlock {
+  type: "stream_text";
+  chunks: string[];
+  delayMs: number;
+}
+
 export type ResponseBlock = TextBlock | ThinkingBlock | ToolCallBlock;
-export type BrainResponse = ResponseBlock | ResponseBlock[] | ErrorBlock | HttpErrorBlock;
+export type BrainResponse = ResponseBlock | ResponseBlock[] | StreamTextBlock | ErrorBlock | HttpErrorBlock;
 
 export type Brain = (
   request: ApiRequest,
@@ -58,6 +64,12 @@ export type Brain = (
 // ─── Builders ────────────────────────────────────────────────────────
 
 export const text = (content: string): TextBlock => ({ type: "text", text: content });
+
+export const streamText = (chunks: string[], delayMs = 50): StreamTextBlock => ({
+  type: "stream_text",
+  chunks,
+  delayMs,
+});
 
 export const toolCall = (name: string, input: Record<string, unknown>): ToolCallBlock =>
   ({ type: "tool_call", name, input });
@@ -163,7 +175,11 @@ export function toSSE(response: BrainResponse, model: string): string {
     });
   }
 
-  const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
+  const blocks: ResponseBlock[] = Array.isArray(response)
+    ? response
+    : response.type === "stream_text"
+      ? [text(response.chunks.join(""))]
+      : [response as ResponseBlock];
   const hasToolUse = blocks.some((b) => b.type === "tool_call");
   const msgId = `msg_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const out: string[] = [];

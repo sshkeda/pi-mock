@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createGateway } from "../dist/gateway.js";
-import { text } from "../dist/index.js";
+import { text, streamText } from "../dist/index.js";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:http";
 
@@ -365,6 +365,63 @@ test("onRequest — notifies on LLM requests, unsubscribe works", async () => {
 
     assert.equal(received.length, 1, "after unsub should still be 1");
     assert.equal(gw.requests.length, 2);
+  } finally {
+    await gw.close();
+  }
+});
+
+test("LLM API — Anthropic streamText emits delayed SSE deltas", async () => {
+  const gw = await createGateway({
+    brain: () => streamText(["STREAM_PART_ONE ", "STREAM_PART_TWO"], 100),
+    default: "block",
+  });
+  try {
+    const started = Date.now();
+    const result = await new Promise((resolve, reject) => {
+      const dataEvents = [];
+      const req = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port: gw.port,
+          method: "POST",
+          path: "/v1/messages",
+          headers: { "Content-Type": "application/json" },
+        },
+        (res) => {
+          res.on("data", (chunk) => {
+            dataEvents.push({ at: Date.now() - started, text: chunk.toString() });
+          });
+          res.on("end", () => resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: dataEvents.map((entry) => entry.text).join(""),
+            dataEvents,
+          }));
+        },
+      );
+      req.on("error", reject);
+      req.write(JSON.stringify({ model: "test-model", messages: [], max_tokens: 100, stream: true }));
+      req.end();
+    });
+
+    assert.equal(result.status, 200);
+    assert.match(result.headers["content-type"], /text\/event-stream/);
+    assert.match(result.body, /content_block_delta/);
+    assert.match(result.body, /STREAM_PART_ONE /);
+    assert.match(result.body, /STREAM_PART_TWO/);
+    assert.ok(
+      result.body.indexOf("STREAM_PART_ONE ") < result.body.indexOf("STREAM_PART_TWO"),
+      "stream chunks should preserve order",
+    );
+
+    const first = result.dataEvents.find((entry) => entry.text.includes("STREAM_PART_ONE "));
+    const second = result.dataEvents.find((entry) => entry.text.includes("STREAM_PART_TWO"));
+    assert.ok(first, "first stream chunk should arrive in a data event");
+    assert.ok(second, "second stream chunk should arrive in a data event");
+    assert.ok(
+      second.at - first.at >= 50,
+      `second chunk should be delayed; first=${first.at}ms second=${second.at}ms`,
+    );
   } finally {
     await gw.close();
   }

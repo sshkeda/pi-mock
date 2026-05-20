@@ -13,7 +13,7 @@ import {
   serializeResponse,
   serializeProviderError,
 } from "../dist/providers.js";
-import { text, bash, toolCall, thinking, error } from "../dist/index.js";
+import { text, bash, toolCall, thinking, error, streamText } from "../dist/index.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // detectProvider
@@ -177,6 +177,15 @@ test("serializeResponse — Anthropic text", () => {
   assert.ok(body.includes('"hello"'), "has text content");
   assert.ok(body.includes("message_stop"), "has message_stop");
   assert.ok(body.includes('"stop_reason":"end_turn"'), "stop_reason end_turn");
+});
+
+test("serializeResponse — streamText joins chunks for synchronous serializers", () => {
+  for (const provider of ["anthropic", "openai", "openai-responses", "google"]) {
+    const { contentType, body } = serializeResponse(provider, streamText(["hello ", "stream"], 1), "mock-model");
+    assert.equal(contentType, "text/event-stream", provider);
+    assert.ok(body.includes("hello stream"), `${provider} includes joined stream text`);
+    assert.doesNotMatch(body, /stream_text/, `${provider} does not leak helper-only block type`);
+  }
 });
 
 test("serializeResponse — Anthropic tool_call", () => {

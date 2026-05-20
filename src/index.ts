@@ -18,6 +18,7 @@ export {
 } from "./brains.js";
 export {
   text,
+  streamText,
   thinking,
   toolCall,
   bash,
@@ -35,6 +36,7 @@ export {
   type BrainResponse,
   type ResponseBlock,
   type TextBlock,
+  type StreamTextBlock,
   type ThinkingBlock,
   type ToolCallBlock,
   type ErrorBlock,

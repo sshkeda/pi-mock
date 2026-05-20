@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ApiRequest, BrainResponse, ResponseBlock } from "./anthropic.js";
+import { text, type ApiRequest, type BrainResponse, type ResponseBlock } from "./anthropic.js";
 import { toSSE as anthropicToSSE } from "./anthropic.js";
 
 // ─── Provider detection ──────────────────────────────────────────────
@@ -63,7 +63,11 @@ export function openaiToSSE(response: BrainResponse, model: string): string {
     })}\n\n`;
   }
 
-  const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
+  const blocks: ResponseBlock[] = Array.isArray(response)
+    ? response
+    : response.type === "stream_text"
+      ? [text(response.chunks.join(""))]
+      : [response as ResponseBlock];
   const id = `chatcmpl-${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const created = Math.floor(Date.now() / 1000);
   const out: string[] = [];
@@ -213,7 +217,11 @@ export function googleToSSE(response: BrainResponse, _model: string): string {
     })}\n\n`;
   }
 
-  const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
+  const blocks: ResponseBlock[] = Array.isArray(response)
+    ? response
+    : response.type === "stream_text"
+      ? [text(response.chunks.join(""))]
+      : [response as ResponseBlock];
   const out: string[] = [];
 
   // Filter to emittable blocks; warn about dropped thinking blocks
@@ -345,7 +353,11 @@ export function openaiResponsesToSSE(response: BrainResponse, model: string): st
     return respSSE("error", { type: "error", code: "server_error", message: response.message });
   }
 
-  const blocks: ResponseBlock[] = Array.isArray(response) ? response : [response as ResponseBlock];
+  const blocks: ResponseBlock[] = Array.isArray(response)
+    ? response
+    : response.type === "stream_text"
+      ? [text(response.chunks.join(""))]
+      : [response as ResponseBlock];
   const responseId = `resp_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const out: string[] = [];
   let seq = 0;
