@@ -134,7 +134,7 @@ export interface MockOptions {
   uiHandler?: UIHandler;
   /**
    * Gateway bind address. Default: "127.0.0.1" (local), "0.0.0.0" (sandbox).
-   * Override to bind to a specific interface (e.g. Docker bridge IP) instead
+   * Override to bind to a specific interface (e.g. Docker network IP) instead
    * of all interfaces in sandbox mode.
    */
   gatewayHost?: string;
@@ -268,7 +268,7 @@ export interface Mock {
   /**
    * List the names of every tool registered with pi (across all loaded
    * extensions). Tests can use this to verify their extension's tool
-   * registration timing — e.g. confirming that a bridge proxy showed
+   * registration timing — e.g. confirming that a proxy tool showed
    * up after `session_start` rather than during extension load.
    */
   getRegisteredTools(): Promise<string[]>;
@@ -1009,4 +1009,3 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("error", reject);
   });
 }
-

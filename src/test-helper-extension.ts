@@ -1,7 +1,7 @@
 /**
  * pi-mock test helper extension — auto-loaded BEFORE user extensions.
  *
- * Bridges gaps between pi's RPC protocol and what integration tests need:
+ * Fills gaps between pi's RPC protocol and what integration tests need:
  *
  * 1. Event bus emission — lets tests emit events on pi.events from outside
  *    (useful for triggering time-based behavior, e.g. TTL expiry)
@@ -72,7 +72,7 @@ export default function (pi: any) {
   // ── /_mock_get_registered_tools ──
   // Emit names of every tool registered with pi (via any extension).
   // Tests can query this to verify their extension's tool registration
-  // (e.g. confirming a bridge proxy showed up as expected). Uses
+  // (e.g. confirming a proxy tool showed up as expected). Uses
   // pi.getAllTools() so it sees tools registered via every extension's
   // pi reference, not just the helper's.
   pi.registerCommand("_mock_get_registered_tools", {
